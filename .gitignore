@@ -1,0 +1,38 @@
+# === SEKRETY ===
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+firebase-admin*.json
+service-account*.json
+secrets/
+*-credentials.json
+
+# === Python ===
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# === Node / web ===
+node_modules/
+dist/
+build/
+.next/
+*.local
+
+# === IDE / OS ===
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# === Logi / baza lokalna ===
+*.log
+*.sqlite3
+*.db

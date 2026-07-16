@@ -1,0 +1,21 @@
+[project]
+name = "miplo"
+version = "0.0.1"
+description = "Miplo — board game shelf & community app"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "sqlalchemy",
+    "psycopg[binary]",
+    "alembic",
+    "pydantic-settings",
+    "firebase-admin",
+    "httpx",
+    "redis",
+    "slowapi",
+]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
