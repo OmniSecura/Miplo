@@ -13,11 +13,11 @@ Aplikacja (web/PWA, później mobile)
         ▼
 FastAPI (Cloud Run)  ── weryfikuje token Firebase, dalej pracuje na users.id
         │
-        ├── moduł users        (tożsamość, profil, miasto)
-        ├── moduł games        (proxy + cache do BGG)
-        ├── moduł shelf         (półka, gry usera)   [dojdzie]
-        ├── moduł matchmaking   (kto w okolicy ma X)  [dojdzie]
-        └── moduł venues        (mapa miejscówek)     [dojdzie]
+        ├── moduł users         (tożsamość, profil, miasto)
+        ├── moduł games         (proxy + cache do BGG)   [dojdzie]
+        ├── moduł shelf         (półka, gry usera)       [dojdzie]
+        ├── moduł matchmaking   (kto w okolicy ma X)     [dojdzie]
+        └── moduł venues        (mapa miejscówek)        [dojdzie]
         │
         ▼
 PostgreSQL (Cloud SQL) — jedna baza, users.id jako kotwica dla wszystkiego
@@ -27,12 +27,21 @@ Secret Manager — hasła do bazy, klucz admina Firebase
 
 ## Zasady, które trzymają porządek
 
+- Każdy moduł ma stały układ folderów: `models / schemas / services / routers`.
+  Routery nie dotykają bazy — WSZYSTKIE operacje na bazie (i commity) robi
+  warstwa `service`.
 - Moduły gadają ze sobą przez warstwę `service`, nie sięgają sobie do modeli.
   Dzięki temu późniejsze wydzielenie modułu do osobnego serwisu jest łatwe.
 - Każdy moduł "posiada" swoje tabele; brak dzikich joinów w poprzek domen.
 - Firebase dotykany tylko w `core/auth.py`. Reszta kodu nie wie, że istnieje.
+  Szczegóły integracji: `docs/FIREBASE.md`.
 - Autoryzacja (kto co może) zawsze po naszej stronie — tożsamość bierzemy
   ze zweryfikowanego tokenu, nigdy z tego, co klient poda w payloadzie.
+- API bez wersjonowania w URL (brak `/v1/`) — jeden klient (nasz front),
+  wersjonujemy dopiero, gdy pojawi się konsument, którego nie kontrolujemy.
+- Błędy API to kody, nie teksty: `{"detail": {"error_code": "user_not_found"}}`.
+  Tłumaczenie kodu na komunikat w języku usera robi frontend (i18n) — kod
+  raz opublikowany jest wieczny i niezależny od języka.
 
 ## Kluczowe źródło danych
 

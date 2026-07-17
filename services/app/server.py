@@ -1,18 +1,24 @@
-import os
+from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.openapi.docs import get_swagger_ui_html
 from starlette.middleware.cors import CORSMiddleware
-from slowapi.middleware import SlowAPIMiddleware
 
-from services.app.core.config import APP_NAME, APP_DESCRIPTION, APP_VERSION
-from services.app.core.security.limiter.rate_limit import (
-    limiter,
-    RateLimitExceeded,
-    _rate_limit_exceeded_handler,
-)
-from services.app.core.database import Base, _connector
 from services.app.api_router import api_router
+from services.app.core.auth import init_firebase
+from services.app.core.config import APP_DESCRIPTION, APP_NAME, APP_VERSION, settings
+from services.app.core.database import create_all_for_local, ping
+from services.app.core.security.body_limit import BodySizeLimitMiddleware
+from services.app.core.security.limiter import READ_LIMIT, limiter, register_rate_limiting
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Fail-fast: brak/zły klucz Firebase wywala start serwera, nie pierwszy request.
+    init_firebase()
+    # ENV=local: SQLite + tabele tworzą się same; na dev/prod nic nie robi.
+    create_all_for_local()
+    yield
 
 
 def create_app() -> FastAPI:
@@ -20,23 +26,24 @@ def create_app() -> FastAPI:
         title=APP_NAME,
         description=APP_DESCRIPTION,
         version=APP_VERSION,
+        lifespan=lifespan,
         docs_url=None,
         redoc_url=None,
     )
 
-    allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:4173").split(",")
-
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[origin.strip() for origin in allowed_origins],
+        allow_origins=settings.allowed_origins_list,
         allow_methods=["*"],
         allow_headers=["*"],
         allow_credentials=True,
     )
 
-    app.state.limiter = limiter
-    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-    app.add_middleware(SlowAPIMiddleware)
+    register_rate_limiting(app)
+
+    # Ostatni add_middleware = najbardziej zewnętrzna warstwa: limit wielkości
+    # body tnie za duże requesty zanim cokolwiek innego je dotknie.
+    app.add_middleware(BodySizeLimitMiddleware)
 
     @app.get("/", include_in_schema=False)
     @app.get("/docs", include_in_schema=False)
@@ -46,11 +53,14 @@ def create_app() -> FastAPI:
             title=f"{APP_NAME} — Swagger UI",
         )
 
-    @app.get("/health", tags=["System"])
-    def health():
+    # Jedyny endpoint bez auth, a dotyka bazy — limit per IP, żeby flood
+    # nie wysycał puli połączeń.
+    @app.get("/health", tags=["system"])
+    @limiter.limit(READ_LIMIT)
+    def health(request: Request, response: Response):
         return {
             "status": "ok",
-            "database": "reachable" if _connector.ping() else "unreachable",
+            "database": "reachable" if ping() else "unreachable",
         }
 
     app.include_router(api_router)
@@ -59,12 +69,3 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
-
-
-@app.on_event("startup")
-def on_startup() -> None:
-    # Szkielet: przy sqlite tworzymy tabele automatycznie.
-    # Na Postgresie schemat zarządzany przez database/sql — wyłącz przez DB_CREATE_TABLES=false.
-    if os.getenv("DB_CREATE_TABLES", "true").lower() == "true":
-        from services.app.users.models import User  # noqa: F401 — rejestruje model w Base.metadata
-        Base.metadata.create_all(bind=_connector.get_engine())
