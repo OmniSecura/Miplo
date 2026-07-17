@@ -113,6 +113,8 @@ msgpack==1.2.1
     # via cachecontrol
 packaging==26.2
     # via limits
+pillow==12.3.0
+    # via miplo (pyproject.toml)
 proto-plus==1.28.1
     # via
     #   google-api-core
@@ -148,6 +150,8 @@ python-dotenv==1.2.2
     # via
     #   pydantic-settings
     #   uvicorn
+python-multipart==0.0.32
+    # via miplo (pyproject.toml)
 pyyaml==6.0.3
     # via uvicorn
 redis==8.0.1

@@ -5,9 +5,13 @@ Tłumaczenie kodu na komunikat w języku usera to zadanie frontendu (i18n).
 Kod raz opublikowany jest wieczny — zmiana brzmienia komunikatu nie dotyka API.
 """
 
+import logging
 from enum import Enum
 
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+
+logger = logging.getLogger(__name__)
 
 
 class ErrorCode(str, Enum):
@@ -26,6 +30,11 @@ class ErrorCode(str, Enum):
     CANNOT_EDIT_OTHER_USER = "cannot_edit_other_user"
     DISPLAY_NAME_TOO_LONG = "display_name_too_long"
     CITY_REQUIRED = "city_required"
+
+    # ── Pliki / upload ────────────────────────────────────────────────
+    FILE_TOO_LARGE = "file_too_large"
+    INVALID_FILE_TYPE = "invalid_file_type"
+    AVATAR_UPLOAD_FAILED = "avatar_upload_failed"
 
     # ── Rate limiting ─────────────────────────────────────────────────
     RATE_LIMIT_EXCEEDED = "rate_limit_exceeded"
@@ -85,3 +94,19 @@ class ApiError(HTTPException):
         headers = {"Retry-After": str(retry_after)} if retry_after else None
         details = {"retry_after": retry_after} if retry_after else None
         return cls(429, ErrorCode.RATE_LIMIT_EXCEEDED, details=details, headers=headers)
+
+
+def register_error_handlers(app: FastAPI) -> None:
+    """Nieobsłużone wyjątki też mówią kontraktem: 500 {"error_code": "internal_error"}.
+
+    Traceback ląduje TYLKO w logach — nigdy w odpowiedzi. Wołane w create_app().
+    """
+
+    async def _internal_error_handler(request: Request, exc: Exception) -> JSONResponse:
+        logger.exception("Nieobsłużony wyjątek w %s %s", request.method, request.url.path, exc_info=exc)
+        return JSONResponse(
+            status_code=500,
+            content={"detail": {"error_code": ErrorCode.INTERNAL_ERROR.value}},
+        )
+
+    app.add_exception_handler(Exception, _internal_error_handler)

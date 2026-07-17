@@ -9,6 +9,7 @@ chodzi o "mojego" usera — obiekt pochodzi z get_current_user, więc nie da si�
 przez pomyłkę zoperować na cudzym koncie.
 """
 
+import logging
 import re
 import secrets
 
@@ -19,6 +20,9 @@ from sqlalchemy.orm import Session
 from services.app.core.errors import ApiError, ErrorCode
 from services.app.users.models import User
 from services.app.users.schemas import UserCreate, UserUpdate
+from services.app.users.services import avatar_service
+
+logger = logging.getLogger(__name__)
 
 # ── Odczyty ───────────────────────────────────────────────────────────────────
 
@@ -124,11 +128,30 @@ def activate(db: Session, user: User) -> User:
     return user
 
 
+def update_avatar_url(db: Session, user: User, avatar_url: str | None) -> User:
+    """Jedyna droga zmiany avatar_url — wołane wyłącznie przez endpointy
+    avatara. URL zawsze pochodzi z naszego Storage, nigdy od usera."""
+    user.avatar_url = avatar_url
+    db.commit()
+    db.refresh(user)
+    return user
+
+
 def delete_account(db: Session, user: User) -> None:
     """Twarde usunięcie danych lokalnych (RODO / wymóg Apple).
 
     Konto po stronie Firebase usuwa core/auth.delete_firebase_account —
     woła je router, PO usunięciu z naszej bazy.
     """
+    # Avatar z bucketa: padnięcie Storage NIE blokuje usunięcia konta —
+    # dane osobowe z bazy są ważniejsze niż osierocony plik (do posprzątania).
+    try:
+        avatar_service.delete_avatar(user.firebase_uid)
+    except Exception:
+        logger.warning(
+            "Nie udało się usunąć avatara z Storage dla %s — plik osierocony",
+            user.firebase_uid,
+            exc_info=True,
+        )
     db.delete(user)
     db.commit()

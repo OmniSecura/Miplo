@@ -31,6 +31,7 @@ from services.app.core.errors import ErrorCode
 
 READ_LIMIT = "60/minute"      # odczyty (GET)
 WRITE_LIMIT = "20/minute"     # zapisy (PUT/POST)
+UPLOAD_LIMIT = "5/minute"     # upload plików (CPU na optymalizację + transfer)
 DELETE_LIMIT = "5/hour"       # operacje destrukcyjne (DELETE /me)
 
 

@@ -66,17 +66,9 @@ Bio = Annotated[
     StringConstraints(strip_whitespace=True, max_length=2000),
     AfterValidator(_reject_control_chars_multiline),
 ]
-# Tylko https i tylko bezpieczny podzbiór znaków URL — odpada http, javascript:,
-# data:, a także ", ', <, >, \ (wektory wstrzyknięć do atrybutów HTML).
-# Hosty IDN muszą być w punycode (xn--...), co i tak robi każda przeglądarka.
-AvatarUrl = Annotated[
-    str,
-    StringConstraints(
-        strip_whitespace=True,
-        max_length=500,
-        pattern=r"^https://[A-Za-z0-9._~:/?#\[\]@!$&()*+,;=%-]+$",
-    ),
-]
+# avatar_url celowo NIE ma typu wejściowego: zmiana avatara wyłącznie przez
+# POST /me/avatar (upload) i DELETE /me/avatar — URL zawsze buduje backend
+# ze swojego Storage, user nigdy nie wpisuje go sam.
 
 
 class UserCreate(BaseModel):
@@ -113,7 +105,6 @@ class UserUpdate(BaseModel):
     display_name: DisplayName | None = None
     city: City | None = None
     bio: Bio | None = None
-    avatar_url: AvatarUrl | None = None
 
 
 class UserProfile(BaseModel):

@@ -45,6 +45,8 @@ identyfikatora konta.
 |---|---|---|---|
 | `GET /api/me` | ✔ | 60/min | `UserProfile` |
 | `PUT /api/me` | ✔ | 20/min | `UserProfile` (po zmianie) |
+| `POST /api/me/avatar` | ✔ | 5/min | `UserProfile` (multipart, pole `file`; jpeg/png/webp ≤2 MB → webp 400×400 w Firebase Storage) |
+| `DELETE /api/me/avatar` | ✔ | 20/min | `204` (blob z bucketa + `avatar_url = NULL`; idempotentne) |
 | `POST /api/me/deactivate` | ✔ | 5/h | `204` (soft delete: tylko flaga `is_active`, odwracalne) |
 | `POST /api/me/activate` | ✔ (działa dla nieaktywnych) | 20/min | `204` (reaktywacja po soft delete) |
 | `DELETE /api/me` | ✔ (działa dla nieaktywnych) | 5/h | `204` (twarde usunięcie: nasza baza → Firebase; RODO/Apple) |
@@ -83,7 +85,7 @@ go nie widać.
 | `display_name` | tak (2–80) | tak | tak |
 | `city` | tak (2–120) | tak | tak |
 | `bio` | tak (≤2000) | tak | tak |
-| `avatar_url` | tak (tylko `https://`, ≤500) | tak | tak |
+| `avatar_url` | **NIE przez JSON** — tylko upload/DELETE `/me/avatar`; URL zawsze z naszego Storage | tak | tak |
 | `created_at` | nie (nadaje baza) | tak | tak („dołączył(a) X") |
 | `updated_at` | **NIE** | **NIE** | **NIE** |
 | `is_active` | **NIE** | **NIE** | **NIE** |
@@ -106,10 +108,13 @@ tłumaczy frontend (i18n). Katalog: enum `ErrorCode` w `core/errors.py`.
 | 401 | `invalid_token` | podpis się nie zgadza / revoked / nie-JWT |
 | 403 | `user_inactive` | konto zdezaktywowane (soft delete) |
 | 403 | `forbidden` | rezerwowy — próba dostępu do cudzych zasobów |
+| 400 | `file_too_large` | avatar > 2 MB (`details.max_bytes`) albo > 24 Mpx (`details.max_pixels`) |
+| 400 | `invalid_file_type` | content-type spoza jpeg/png/webp albo bajty nie są obrazem |
 | 404 | `user_not_found` | publiczny profil nie istnieje lub nieaktywny |
 | 409 | `tag_taken` | `PUT /me` z tagiem zajętym przez kogoś innego |
 | 422 | (format FastAPI) | walidacja Pydantic — pola i przyczyny w `detail` |
 | 429 | `rate_limit_exceeded` | limit requestów; nagłówki `Retry-After`, `X-RateLimit-*` |
+| 502 | `avatar_upload_failed` | Firebase Storage nie przyjął pliku (problem po naszej stronie) |
 
 Każde 401 niesie nagłówek `WWW-Authenticate: Bearer`.
 
@@ -118,10 +123,17 @@ Każde 401 niesie nagłówek `WWW-Authenticate: Bearer`.
 Warstwy obrony, od zewnątrz do środka:
 
 1. **Limit wielkości body** (`core/security/body_limit.py`, czysty ASGI, przed
-   routingiem i auth): body > 64 KB → `413 payload_too_large`; body bez
-   `Content-Length` (chunked) → `411 length_required`. Pydantic waliduje
-   dopiero po sparsowaniu całego JSON-a — bez tego duży payload najpierw
-   zjadałby RAM.
+   routingiem i auth): JSON > 64 KB → `413 payload_too_large`, multipart
+   (uploady) > 3 MB → `413`; body bez `Content-Length` (chunked) →
+   `411 length_required`. Pydantic waliduje dopiero po sparsowaniu całego
+   JSON-a — bez tego duży payload najpierw zjadałby RAM.
+1a. **Avatar — trzy warstwy** (`users/services/avatar_service.py`): rozmiar
+   czytany chunkami z limitem 2 MB PRZED złożeniem w RAM → content-type
+   z części multipart (jpeg/png/webp) → Pillow: wymiary sprawdzane
+   Z NAGŁÓWKA przed dekodowaniem (bomba pikselowa > 24 Mpx odpada bez
+   alokacji RAM), potem pełny decode wykrywa nie-obrazy. Wynik zawsze przechodzi przez re-encode
+   do webp 400×400 — do bucketa nigdy nie trafiają oryginalne bajty ani
+   EXIF (GPS, model telefonu). `avatar_url` nieedytowalny przez JSON.
 2. **Schematy Pydantic** (`users/schemas/user.py`):
    - `extra="forbid"` wszędzie — mass assignment (`is_active`, `firebase_uid`
      w payloadzie) kończy się 422;
@@ -157,6 +169,8 @@ produkcji domknąć na poziomie infrastruktury (Cloud Armor / LB rate limit).
 
 ## Usuwanie konta (RODO / wymóg Apple)
 
-`DELETE /me` → (1) twarde `DELETE` w naszej bazie, (2) `delete_user` w Firebase.
-Kolejność świadoma: gdy krok 2 padnie, dane osobowe z naszej bazy już nie
-istnieją, a user przy kolejnym logowaniu dostałby najwyżej świeży, pusty profil.
+`DELETE /me` → (1) avatar z bucketa (padnięcie Storage = tylko warning, nie
+blokuje usunięcia danych), (2) twarde `DELETE` w naszej bazie, (3) `delete_user`
+w Firebase. Kolejność świadoma: gdy krok 3 padnie, dane osobowe z naszej bazy
+już nie istnieją, a user przy kolejnym logowaniu dostałby najwyżej świeży,
+pusty profil.

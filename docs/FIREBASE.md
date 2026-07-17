@@ -87,11 +87,47 @@ a nie pierwszy request usera.
 przed startem uvicorna — `verify_id_token` akceptuje wtedy tokeny emulatora.
 Nie ustawiaj tej zmiennej nigdzie poza lokalną maszyną.
 
+## Firebase Storage (avatary)
+
+Avatary lądują w buckecie Firebase Storage: `avatars/{firebase_uid}/avatar.webp`,
+publiczny odczyt, zapis wyłącznie przez backend (Admin SDK). Uzasadnienie wyboru
+Firebase Storage: `decisions/0005-firebase-storage-avatary.md`. Szczegóły API:
+`AUTH+USERS.md`.
+
+### Setup
+1. Konsola → **Build → Storage → Get started**. UWAGA: Storage może wymagać
+   planu **Blaze** (pay-as-you-go) — darmowe limity zostają te same
+   (5 GB storage, 1 GB/dzień download), tylko trzeba podpiąć kartę.
+   Alternatywa na dev: serwowanie avatarów lokalnie przez `StaticFiles`
+   i podmiana na Storage przy deployu.
+2. Nazwę bucketa (np. `miplo-dev.firebasestorage.app` — bez `gs://`) wpisz do
+   `services/.env` jako `FIREBASE_STORAGE_BUCKET`.
+3. **Reguły bezpieczeństwa** (zakładka Rules): zablokuj wszystko dla klientów —
+   backend i tak chodzi przez Admin SDK, który omija reguły:
+   ```
+   rules_version = '2';
+   service firebase.storage {
+     match /b/{bucket}/o {
+       match /{allPaths=**} {
+         allow read, write: if false;
+       }
+     }
+   }
+   ```
+   Publiczny odczyt avatarów nadaje jawnie backend (`blob.make_public()`)
+   per plik — reguły klienckie nie muszą (i nie powinny) nic otwierać.
+
+### Test manualny
+Upload przez Swagger (`POST /api/me/avatar`, pole `file`) → w odpowiedzi
+`avatar_url` w stylu `https://storage.googleapis.com/...avatar.webp?v=...` —
+link musi wyświetlać obrazek w przeglądarce bez logowania.
+
 ## Usuwanie konta (RODO / wymóg Apple)
 
-`DELETE /me` robi dwie rzeczy, w tej kolejności:
-1. twarde `DELETE` naszego rekordu (dane osobowe znikają z naszej bazy),
-2. `firebase_admin.auth.delete_user(uid)` — konto znika z Firebase.
+`DELETE /me` robi trzy rzeczy, w tej kolejności:
+1. usuwa avatar z bucketa (padnięcie Storage nie blokuje reszty — tylko warning),
+2. twarde `DELETE` naszego rekordu (dane osobowe znikają z naszej bazy),
+3. `firebase_admin.auth.delete_user(uid)` — konto znika z Firebase.
 
 Gdyby krok 2 padł, dane z naszej bazy już nie istnieją, a user przy kolejnym
 logowaniu dostałby świeży, pusty profil — bez wycieku starych danych.
