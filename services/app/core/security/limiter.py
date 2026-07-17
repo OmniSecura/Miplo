@@ -33,6 +33,11 @@ READ_LIMIT = "60/minute"      # odczyty (GET)
 WRITE_LIMIT = "20/minute"     # zapisy (PUT/POST)
 UPLOAD_LIMIT = "5/minute"     # upload plików (CPU na optymalizację + transfer)
 DELETE_LIMIT = "5/hour"       # operacje destrukcyjne (DELETE /me)
+CUSTOM_GAME_LIMIT = "5/hour"  # community content / ochrona przed spamem
+CATALOG_IMPORT_LIMIT = "1/hour"  # ciężki, operatorski import CSV/JSON
+GALLERY_UPLOAD_LIMIT = "10/hour"  # zdjęcia wnętrza customowej gry
+MODEL_UPLOAD_LIMIT = "3/hour"     # sześć tekstur + generowanie GLB
+MODERATION_LIMIT = "60/minute"    # chronione operacje administratora
 
 
 def _key_func(request: Request) -> str:

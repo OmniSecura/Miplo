@@ -1,16 +1,19 @@
-# 0005 — Firebase Storage do avatarów (nie S3, nie dysk)
+# 0005 — Firebase Storage jako bucket publicznych mediów
 
 Data: 2026-07-17
 Status: przyjęte
 
 ## Kontekst
-Avatary graczy potrzebują hostingu plików: upload, optymalizacja, publiczny URL.
+Avatary graczy i okładki customowych gier potrzebują hostingu plików: upload,
+optymalizacja i publiczny URL.
 Rozważane: Firebase Storage (Cloud Storage pod spodem), AWS S3 / R2 (Cloudflare),
 serwowanie z dysku serwera (Cloud Run).
 
 ## Decyzja
-Firebase Storage (bucket GCS zarządzany przez Firebase). Backend uploaduje przez
-Admin SDK, pliki publicznie dostępne pod stałym URL-em, bez tokenów.
+Podjęta decyzja: używamy Firebase Storage (bucketa GCS zarządzanego przez
+Firebase). Backend uploaduje przez Admin SDK. Avatary są publiczne od razu;
+treści społecznościowe gier pozostają prywatne do chwili moderacji, a następnie
+są dostępne pod stałym URL-em bez tokenów odczytu.
 
 ## Dlaczego
 - Firebase Auth już w projekcie — Admin SDK zaciągnięty; Storage to jedna linia
@@ -19,8 +22,8 @@ Admin SDK, pliki publicznie dostępne pod stałym URL-em, bez tokenów.
   zamiast dwóch chmur.
 - Cloud Run jest stateless — dysk efemeryczny, po skalowaniu instancji pliki
   znikają. Montowanie GCS FUSE możliwe, ale wolne i komplikuje deploy.
-- Darmowe limity (5 GB storage, 1 GB/dzień download) wystarczą na długo —
-  avatar 400x400 webp waży ~10-30 KB; 5 GB = ~170 000 avatarów.
+- Koszt zależy od aktualnego cennika Google Cloud/Firebase; przed produkcją
+  konfigurujemy budżet i alerty zamiast opierać architekturę na stałym limicie free tier.
 - Publiczny odczyt bez tokenów = proste `<img src="...">`, CDN Google
   robi resztę. Cache busting przez `?v=` (milisekundy).
 - Reguły bezpieczeństwa Firebase zablokowane na `allow read, write: if false` —
@@ -28,10 +31,12 @@ Admin SDK, pliki publicznie dostępne pod stałym URL-em, bez tokenów.
   bezpośredniego dostępu do zapisu.
 
 ## Implementacja
-- Ścieżka: `avatars/{firebase_uid}/avatar.webp` — stała na użytkownika,
-  nadpisywana przy każdym uploadzie (zero śmieci w buckecie).
-- Optymalizacja przed uploadem: Pillow re-encode do webp 400x400, EXIF
-  usuwany, przezroczystość → białe tło.
+- Ścieżki docelowe obejmują avatar, okładkę, galerię i `box_model.glb`.
+- Kandydaci okładek, zdjęć i modeli są prywatni; podgląd moderatora używa
+  podpisanego URL-a, a akceptacja nadaje publiczny odczyt.
+- Optymalizacja przed uploadem zależy od zasobu: avatar → WEBP 400×400,
+  okładka → WEBP do 800 px, galeria → WEBP do 1600 px, tekstury GLB → JPEG
+  do 1024 px. Oryginały i EXIF nie trafiają do trwałego Storage.
 - Walidacja 3-warstwowa + limit pikseli (24 Mpx) przed dekodowaniem
   (obrona przed bombą pikselową).
 - `DELETE /me` czyści avatar z bucketa przed usunięciem rekordu z bazy.
@@ -41,8 +46,8 @@ Admin SDK, pliki publicznie dostępne pod stałym URL-em, bez tokenów.
   Cloud SQL, Secret Manager) też jest w GCP.
 - Plan Blaze (pay-as-you-go) wymagany do włączenia Storage — kartę trzeba
   podpiąć, ale darmowe limity zostają.
-- Migracja na S3/R2 w przyszłości = zmiana jednego serwisu (`avatar_service.py`
-  + `core/storage.py`), reszta kodu nie wie, skąd URL.
+- Migracja na S3/R2 w przyszłości = zmiana `core/storage.py` oraz serwisów plików;
+  routery i kontrakty domenowe pozostają bez zmian.
 
 ## Kiedy zrewidować
 Gdy egress z GCS zacznie kosztować (>1 TB/mies) — wtedy Cloudflare R2

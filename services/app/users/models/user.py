@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Integer, String, Text, func, true
+from sqlalchemy import Boolean, DateTime, Integer, String, Text, false, func, true
 from sqlalchemy.orm import Mapped, mapped_column
 
 from services.app.core.database import Base
@@ -30,6 +30,9 @@ class User(Base):
     avatar_url: Mapped[str | None] = mapped_column(String(500))
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+    # Uprawnienie operatorskie ustawiane wyłącznie w bazie/migracji. Nigdy nie
+    # jest przyjmowane ani zwracane przez publiczne schematy users.
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

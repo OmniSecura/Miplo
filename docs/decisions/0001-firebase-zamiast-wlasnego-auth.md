@@ -9,7 +9,7 @@ vs gotowe rozwiązanie.
 
 ## Decyzja
 Firebase Auth do logowania i rejestracji. Własna tabela `users` trzyma tylko
-`firebase_uid` jako most + dane apki (miasto, nick). Hasła i tożsamość zostają
+`firebase_uid` jako most + dane apki (miasto, publiczny `tag`, profil). Hasła i tożsamość zostają
 po stronie Firebase.
 
 ## Dlaczego

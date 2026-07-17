@@ -17,6 +17,7 @@ dependencies = [
     "email-validator",
     "pillow",
     "python-multipart",
+    "python-slugify",
 ]
 
 [build-system]

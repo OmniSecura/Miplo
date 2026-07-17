@@ -33,7 +33,8 @@ w `core/auth.py`). Endpoint rejestracji nie istnieje i ma nie istnieć.
 Zły token → `401 {"detail": {"error_code": "invalid_token"}}`. Wygasły →
 `401 ... "token_expired"` (frontend: odśwież token przez SDK i ponów). Brak tokenu →
 `401 ... "unauthorized"`. Konto dezaktywowane → `403 ... "user_inactive"`.
-Pełny katalog kodów: `services/app/core/errors.py` (enum `ErrorCode`), opis: `docs/Auth.md`.
+Pełny katalog kodów: `services/app/core/errors.py` (enum `ErrorCode`) oraz
+[`ERRORS.md`](ERRORS.md).
 
 ## Setup krok po kroku
 
@@ -87,18 +88,27 @@ a nie pierwszy request usera.
 przed startem uvicorna — `verify_id_token` akceptuje wtedy tokeny emulatora.
 Nie ustawiaj tej zmiennej nigdzie poza lokalną maszyną.
 
-## Firebase Storage (avatary)
+## Firebase Storage (avatary oraz media gier)
 
-Avatary lądują w buckecie Firebase Storage: `avatars/{firebase_uid}/avatar.webp`,
-publiczny odczyt, zapis wyłącznie przez backend (Admin SDK). Uzasadnienie wyboru
-Firebase Storage: `decisions/0005-firebase-storage-avatary.md`. Szczegóły API:
-`AUTH+USERS.md`.
+Podjęta decyzja: publiczne media Miplo przechowujemy w Firebase Storage. Obecnie
+są to:
+
+- `avatars/{firebase_uid}/avatar.webp` — avatar usera,
+- `games/{game_id}/cover.webp` — okładka customowej gry,
+- `games/{game_id}/gallery/{uuid}.webp` — zatwierdzone zdjęcie galerii,
+- `games/{game_id}/box_model.glb` — zatwierdzony model pudełka,
+- `games/{game_id}/submissions/...` i `models/submissions/...` — prywatny staging.
+
+Publiczny jest wyłącznie odczyt zatwierdzonych obiektów. Staging nie dostaje
+publicznego ACL; administrator ogląda go przez podpisany URL ważny 15 minut.
+Upload, promocję i usuwanie wykonuje backend przez Admin SDK. Uzasadnienie:
+decyzje `0005`, `0008`, `0009` i `0010`.
 
 ### Setup
 1. Konsola → **Build → Storage → Get started**. UWAGA: Storage może wymagać
-   planu **Blaze** (pay-as-you-go) — darmowe limity zostają te same
-   (5 GB storage, 1 GB/dzień download), tylko trzeba podpiąć kartę.
-   Alternatywa na dev: serwowanie avatarów lokalnie przez `StaticFiles`
+   planu **Blaze** (pay-as-you-go) i podpięcia karty. Limity oraz ceny zmieniają
+   się w czasie, dlatego przed produkcją sprawdź aktualny cennik i ustaw alert budżetu.
+   Alternatywa na dev: serwowanie mediów lokalnie przez `StaticFiles`
    i podmiana na Storage przy deployu.
 2. Nazwę bucketa (np. `miplo-dev.firebasestorage.app` — bez `gs://`) wpisz do
    `services/.env` jako `FIREBASE_STORAGE_BUCKET`.
@@ -114,13 +124,15 @@ Firebase Storage: `decisions/0005-firebase-storage-avatary.md`. Szczegóły API:
      }
    }
    ```
-   Publiczny odczyt avatarów nadaje jawnie backend (`blob.make_public()`)
+   Publiczny odczyt mediów nadaje jawnie backend (`blob.make_public()`)
    per plik — reguły klienckie nie muszą (i nie powinny) nic otwierać.
 
 ### Test manualny
-Upload przez Swagger (`POST /api/me/avatar`, pole `file`) → w odpowiedzi
-`avatar_url` w stylu `https://storage.googleapis.com/...avatar.webp?v=...` —
-link musi wyświetlać obrazek w przeglądarce bez logowania.
+Upload avatara przez Swagger (`POST /api/me/avatar`, pole `file`) lub utworzenie
+customowej gry z okładką (`POST /api/games`) powinno po publikacji zwrócić URL
+`https://storage.googleapis.com/...`, który działa bez logowania. Galerię i GLB
+należy dodatkowo sprawdzić w pełnym flow: zgłoszenie → prywatny podgląd moderatora
+→ akceptacja → publiczny URL.
 
 ## Usuwanie konta (RODO / wymóg Apple)
 
@@ -129,13 +141,14 @@ link musi wyświetlać obrazek w przeglądarce bez logowania.
 2. twarde `DELETE` naszego rekordu (dane osobowe znikają z naszej bazy),
 3. `firebase_admin.auth.delete_user(uid)` — konto znika z Firebase.
 
-Gdyby krok 2 padł, dane z naszej bazy już nie istnieją, a user przy kolejnym
+Gdyby krok 3 padł, dane z naszej bazy już nie istnieją, a user przy kolejnym
 logowaniu dostałby świeży, pusty profil — bez wycieku starych danych.
 
 ## Zasady
 
 - Tożsamość ZAWSZE z tokenu (`verify_id_token`), nigdy z payloadu requestu.
-- Firebase dotykany wyłącznie w `services/app/core/auth.py` — reszta kodu
-  dostaje lokalnego `User` i nie wie, że Firebase istnieje.
+- Firebase Auth jest dotykany wyłącznie w `services/app/core/auth.py`. Bucket
+  inicjalizuje `core/storage.py`, a pliki obsługują wyspecjalizowane serwisy
+  avatara, okładek, galerii i modeli 3D.
 - Backend nie przechowuje żadnych tokenów ani haseł. Refresh robi klient (SDK).
 - Osobne projekty Firebase dla dev i prod = osobne klucze, osobni userzy testowi.

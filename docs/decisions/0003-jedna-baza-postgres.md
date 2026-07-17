@@ -23,5 +23,5 @@ read replica → (dużo później) partycjonowanie/sharding. Wszystkie działaj�
 na JEDNEJ bazie; dzielenie na wiele baz to osobna decyzja, nie lekarstwo na obciążenie.
 
 ## Indeksy krytyczne dla matchmakingu
-`users.city`, oraz `shelf_items(bgg_id, lendable)` — pod zapytanie
+`users.city` oraz przyszłe `shelf_items(game_id, user_id, lendable)` — pod zapytanie
 "kto w mieście X ma grę Y do wypożyczenia".
