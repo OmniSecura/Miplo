@@ -89,8 +89,9 @@ go nie widać.
 | `created_at` | nie (nadaje baza) | tak | tak („dołączył(a) X") |
 | `updated_at` | **NIE** | **NIE** | **NIE** |
 | `is_active` | **NIE** | **NIE** | **NIE** |
+| `is_admin` | **NIE** | **NIE** | **NIE** |
 
-Pola czysto backendowe (`id`, `firebase_uid`, `is_active`, `updated_at`) nie
+Pola czysto backendowe (`id`, `firebase_uid`, `is_active`, `is_admin`, `updated_at`) nie
 opuszczają bazy — nie da się ich zobaczyć ani zmienić przez API. Publicznym
 identyfikatorem gracza jest wyłącznie `tag`, a `is_active` objawia się
 klientowi tylko skutkami: `403 user_inactive` dla właściciela nieaktywnego
@@ -118,13 +119,29 @@ tłumaczy frontend (i18n). Katalog: enum `ErrorCode` w `core/errors.py`.
 
 Każde 401 niesie nagłówek `WWW-Authenticate: Bearer`.
 
+## Dostęp administratorski
+
+Zwykłe API zawsze używa Firebase. Wyłącznie router
+`/api/admin/moderation/*` ma dodatkową ścieżkę operatorską:
+
+```http
+X-Admin-Key: <ADMIN_API_KEY z .env/Secret Managera>
+```
+
+Alternatywnie działa Firebase ID token aktywnego lokalnego usera z
+`is_admin=true`. Uniwersalny klucz jest porównywany w stałym czasie, nigdy nie
+jest logowany ani zwracany i nie może znaleźć się w kodzie frontendu. Podany
+błędny klucz daje `401 invalid_admin_api_key`; brak skonfigurowanego sekretu przy
+próbie użycia tej ścieżki daje `503 admin_api_key_not_configured`.
+
 ## Bezpieczeństwo wejścia
 
 Warstwy obrony, od zewnątrz do środka:
 
 1. **Limit wielkości body** (`core/security/body_limit.py`, czysty ASGI, przed
-   routingiem i auth): JSON > 64 KB → `413 payload_too_large`, multipart
-   (uploady) > 3 MB → `413`; body bez `Content-Length` (chunked) →
+   routingiem i auth): JSON > 64 KB → `413 payload_too_large`, zwykły multipart
+   > 3 MB → `413`, model 3D > 14 MB → `413`, import katalogu > 35 MB → `413`;
+   body bez `Content-Length` (chunked) →
    `411 length_required`. Pydantic waliduje dopiero po sparsowaniu całego
    JSON-a — bez tego duży payload najpierw zjadałby RAM.
 1a. **Avatar — trzy warstwy** (`users/services/avatar_service.py`): rozmiar
@@ -142,8 +159,8 @@ Warstwy obrony, od zewnątrz do środka:
      odrzucane we wszystkich polach; w `bio` dozwolone tylko `\n` i `\t`;
    - znaki przejęcia kierunku tekstu (RTL override — spoofing nazw) odrzucane;
      emoji i pełny "zwykły" Unicode przechodzą;
-   - `avatar_url`: tylko `https://` + biała lista znaków URL — bez `"`, `'`,
-     `<`, `>`, `\` (wektory wstrzyknięć do HTML), bez `javascript:`/`data:`;
+   - `avatar_url` nie występuje w schemacie wejściowym; klient nie może podać
+     żadnego URL-a, bo wartość zapisuje wyłącznie backend po uploadzie do bucketa;
    - `tag`: twardy pattern `^[a-z0-9_]{3,30}$` (w path parametrze też).
 3. **SQL**: wyłącznie ORM z bind parameters — zero konkatenacji zapytań.
 4. **Dane z tokenu Firebase** traktowane jak każde inne wejście: walidowane

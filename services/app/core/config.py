@@ -74,6 +74,23 @@ class Settings(BaseSettings):
     # dev: pamięć procesu; prod: redis://... (wspólny licznik dla wielu instancji)
     RATE_LIMIT_STORAGE_URI: str = "memory://"
 
+    # ── BGG API ──────────────────────────────────────────────────────────────
+    BGG_API_BASE: str = Field(
+        default="https://boardgamegeek.com/xmlapi2",
+        pattern=r"^https://[^\s]+$",
+        max_length=300,
+    )
+    BGG_API_TOKEN: str | None = None
+    BGG_CACHE_TTL_SECONDS: int = Field(default=86400, ge=60, le=604800)
+
+    # Sekret operatorski do masowego importu katalogu CSV/JSON. To nie jest
+    # zwykła akcja usera i nie może być chroniona wyłącznie tokenem Firebase.
+    GAMES_IMPORT_KEY: str | None = Field(default=None, min_length=32, max_length=256)
+
+    # Uniwersalny sekret operatorski dla endpointów /api/admin/moderation/*.
+    # Jest alternatywą dla konta Firebase z is_admin=True, nigdy kluczem klienta.
+    ADMIN_API_KEY: str | None = Field(default=None, min_length=32, max_length=256)
+
     @property
     def allowed_origins_list(self) -> list[str]:
         return [o.strip() for o in self.ALLOWED_ORIGINS.split(",") if o.strip()]

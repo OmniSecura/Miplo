@@ -14,6 +14,33 @@ from services.app.core.security.limiter import READ_LIMIT, limiter, register_rat
 from services.app.core.storage import init_storage
 
 
+OPENAPI_TAGS = [
+    {"name": "system", "description": "Stan aplikacji i zależności."},
+    {"name": "users", "description": "Profil, konto i avatar użytkownika."},
+    {"name": "games", "description": "Wspólny publiczny katalog gier."},
+    {
+        "name": "BGG games",
+        "description": "Pobieranie oraz operatorski import danych BoardGameGeek.",
+    },
+    {
+        "name": "custom games",
+        "description": "Tworzenie i zarządzanie grami dodanymi przez społeczność.",
+    },
+    {
+        "name": "game gallery",
+        "description": "Moderowane zdjęcia wnętrza i komponentów gier BGG oraz custom.",
+    },
+    {
+        "name": "3D models",
+        "description": "Społecznościowe generowanie teksturowanych modeli pudełek GLB.",
+    },
+    {
+        "name": "moderation",
+        "description": "Kolejki oraz decyzje dostępne wyłącznie administratorom.",
+    },
+]
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Fail-fast: brak/zły klucz Firebase wywala start serwera, nie pierwszy request.
@@ -33,6 +60,7 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
         docs_url=None,
         redoc_url=None,
+        openapi_tags=OPENAPI_TAGS,
     )
 
     app.add_middleware(
@@ -66,6 +94,10 @@ def create_app() -> FastAPI:
         return {
             "status": "ok",
             "database": "reachable" if ping() else "unreachable",
+            "attribution": {
+                "name": "Powered by BoardGameGeek data",
+                "url": "https://boardgamegeek.com",
+            },
         }
 
     app.include_router(api_router)

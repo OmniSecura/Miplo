@@ -8,10 +8,11 @@ dostaje 422. Tutaj ucinamy na progu:
 - body bez Content-Length (chunked) → 411 length_required; uczciwe klienty
   zawsze deklarują długość, a h11 egzekwuje ramkowanie, więc zaniżyć się nie da.
 
-Dwa progi: JSON (64 KB starcza na największy legalny payload) i multipart
-(uploady plików — 3 MB kryje 2 MB avatara + narzut ramek multipart). Spoofing
-content-type na multipart podnosi napastnikowi limit tylko do 3 MB — nadal
-o rzędy wielkości za mało na zalanie RAM-u.
+Standardowe progi to 64 KB dla JSON i 3 MB dla multipart (2 MB obrazu oraz
+narzut formularza). Wyłącznie dokładna ścieżka operatorska `/api/games/import`
+ma limit 35 MB, a ścieżki kończące się `/3d-model` mają 14 MB dla sześciu
+obrazów po maksymalnie 2 MB. Spoofing content-type nie podnosi limitu innych
+endpointów.
 
 Czysty ASGI (nie BaseHTTPMiddleware) — działa przed routingiem, auth i limiterem,
 czyli chroni także requesty nieuwierzytelnione. Rejestracja: server.py.
@@ -23,6 +24,8 @@ from services.app.core.errors import ErrorCode
 
 MAX_BODY_SIZE = 64 * 1024
 MAX_MULTIPART_BODY_SIZE = 3 * 1024 * 1024
+MAX_CATALOG_IMPORT_BODY_SIZE = 35 * 1024 * 1024
+MAX_MODEL_UPLOAD_BODY_SIZE = 14 * 1024 * 1024
 
 _METHODS_WITH_BODY = {"POST", "PUT", "PATCH"}
 
@@ -54,7 +57,18 @@ class BodySizeLimitMiddleware:
         except ValueError:
             return await self._reject(send, 411, ErrorCode.LENGTH_REQUIRED)
 
-        limit = MAX_MULTIPART_BODY_SIZE if is_multipart else self.max_body_size
+        # Wyjątek tylko dla operatorskiego importu katalogu. Sprawdzenie dokładnej
+        # ścieżki zapobiega podniesieniu limitu dla pozostałych uploadów.
+        if is_multipart and scope.get("path") == "/api/games/import":
+            limit = MAX_CATALOG_IMPORT_BODY_SIZE
+        elif (
+            is_multipart
+            and scope.get("path", "").startswith("/api/games/")
+            and scope.get("path", "").endswith("/3d-model")
+        ):
+            limit = MAX_MODEL_UPLOAD_BODY_SIZE
+        else:
+            limit = MAX_MULTIPART_BODY_SIZE if is_multipart else self.max_body_size
         if declared > limit:
             return await self._reject(send, 413, ErrorCode.PAYLOAD_TOO_LARGE)
 

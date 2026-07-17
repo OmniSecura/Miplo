@@ -78,6 +78,7 @@ def create_all_for_local() -> None:
     if settings.ENV != "local":
         return
     from services.app.users import models  # noqa: F401 — rejestruje modele w Base.metadata
+    from services.app.games import models as _game_models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
 

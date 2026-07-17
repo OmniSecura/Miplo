@@ -4,9 +4,11 @@ Reszta aplikacji dostaje z get_current_user gotowego, lokalnego Usera z bazy.
 Tożsamość ZAWSZE pochodzi ze zweryfikowanego tokenu — nigdy z payloadu requestu.
 """
 
+import secrets
+
 import firebase_admin
 from fastapi import Depends, Request
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 from firebase_admin import auth as firebase_auth
 from firebase_admin import credentials
 from pydantic import ValidationError
@@ -22,6 +24,7 @@ from services.app.users.services import user_service
 # auto_error=False: brak nagłówka obsługujemy sami, bo domyślne zachowanie
 # HTTPBearer to 403 — a brak tokenu to semantycznie 401.
 _bearer_scheme = HTTPBearer(auto_error=False)
+_admin_key_scheme = APIKeyHeader(name="X-Admin-Key", auto_error=False)
 
 
 def init_firebase() -> None:
@@ -90,6 +93,42 @@ def get_current_user(
     if not user.is_active:
         raise ApiError.forbidden(ErrorCode.USER_INACTIVE)
     return user
+
+
+def get_current_admin(user: User = Depends(get_current_user)) -> User:
+    """Aktywny lokalny administrator; roli nie da się ustawić przez API."""
+    if not user.is_admin:
+        raise ApiError.forbidden(ErrorCode.ADMIN_REQUIRED)
+    return user
+
+
+def get_admin_access(
+    request: Request,
+    api_key: str | None = Depends(_admin_key_scheme),
+    bearer: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
+    db: Session = Depends(get_db),
+) -> User | None:
+    """Administrator przez X-Admin-Key albo aktywne konto Firebase z is_admin.
+
+    Podany klucz ma pierwszeństwo: błędnego klucza nie wolno „ratować” drugim
+    mechanizmem, bo maskowałoby to pomyłki i utrudniało wykrywanie ataków.
+    Zwracane ``None`` oznacza autoryzację kluczem operatorskim.
+    """
+    if api_key is not None:
+        configured_key = settings.ADMIN_API_KEY
+        if configured_key is None:
+            raise ApiError(503, ErrorCode.ADMIN_API_KEY_NOT_CONFIGURED)
+        if not secrets.compare_digest(api_key, configured_key):
+            raise ApiError(401, ErrorCode.INVALID_ADMIN_API_KEY)
+
+        # Stabilny, niejawny identyfikator dla rate limitera. Nigdy sam sekret.
+        request.state.firebase_uid = "admin-api-key"
+        return None
+
+    user = get_current_user_allow_inactive(request, bearer, db)
+    if not user.is_active:
+        raise ApiError.forbidden(ErrorCode.USER_INACTIVE)
+    return get_current_admin(user)
 
 
 def delete_firebase_account(firebase_uid: str) -> None:

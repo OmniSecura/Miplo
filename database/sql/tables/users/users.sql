@@ -19,6 +19,7 @@ CREATE TABLE users (
     avatar_url      VARCHAR(500)    NULL,
 
     is_active       BOOLEAN         NOT NULL DEFAULT TRUE,
+    is_admin        BOOLEAN         NOT NULL DEFAULT FALSE,
 
     created_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
