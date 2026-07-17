@@ -1,1 +1,101 @@
-# keep
+"""Jedyne miejsce w kodzie, które wie o istnieniu Firebase (decyzja 0001).
+
+Reszta aplikacji dostaje z get_current_user gotowego, lokalnego Usera z bazy.
+Tożsamość ZAWSZE pochodzi ze zweryfikowanego tokenu — nigdy z payloadu requestu.
+"""
+
+import firebase_admin
+from fastapi import Depends, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from firebase_admin import auth as firebase_auth
+from firebase_admin import credentials
+from pydantic import ValidationError
+from sqlalchemy.orm import Session
+
+from services.app.core.config import settings
+from services.app.core.database import get_db
+from services.app.core.errors import ApiError, ErrorCode
+from services.app.users.models import User
+from services.app.users.schemas import UserCreate
+from services.app.users.services import user_service
+
+# auto_error=False: brak nagłówka obsługujemy sami, bo domyślne zachowanie
+# HTTPBearer to 403 — a brak tokenu to semantycznie 401.
+_bearer_scheme = HTTPBearer(auto_error=False)
+
+
+def init_firebase() -> None:
+    """Inicjalizacja firebase-admin — wołana raz, przy starcie aplikacji (lifespan).
+
+    Fail-fast: brak lub zły klucz wywala start serwera, nie pierwszy request.
+    """
+    if not firebase_admin._apps:
+        cred = credentials.Certificate(settings.FIREBASE_ADMIN_CREDENTIALS)
+        firebase_admin.initialize_app(cred)
+
+
+def get_current_user_allow_inactive(
+    request: Request,
+    bearer: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
+    db: Session = Depends(get_db),
+) -> User:
+    """Jak get_current_user, ale NIE odrzuca kont zdeaktywowanych.
+
+    Wyłącznie dla endpointów, które muszą działać na nieaktywnym koncie
+    (POST /me/activate — inaczej deaktywacja byłaby nieodwracalna).
+    Wzorzec "znajdź albo utwórz": przy pierwszym logowaniu zakładamy rekord
+    w naszej bazie na podstawie danych z tokenu — endpoint rejestracji nie istnieje.
+    """
+    if bearer is None:
+        raise ApiError.unauthorized()  # brak tokenu → generyczne "unauthorized"
+
+    try:
+        decoded = firebase_auth.verify_id_token(bearer.credentials)
+    except firebase_auth.ExpiredIdTokenError:
+        # osobny kod — frontend wie, że wystarczy odświeżyć token przez SDK
+        raise ApiError.unauthorized(ErrorCode.TOKEN_EXPIRED)
+    except (firebase_auth.InvalidIdTokenError, ValueError):
+        # InvalidIdTokenError obejmuje też Revoked/UserDisabled;
+        # ValueError = token niebędący w ogóle JWT.
+        raise ApiError.unauthorized(ErrorCode.INVALID_TOKEN)
+
+    firebase_uid: str = decoded["uid"]
+
+    user = user_service.get_by_firebase_uid(db, firebase_uid)
+    if user is None:
+        # Firebase nie ogranicza długości "name" — przycinamy do rozmiaru kolumny.
+        display_name = (decoded.get("name") or "").strip()[:80] or None
+        try:
+            payload = UserCreate(
+                firebase_uid=firebase_uid,
+                email=decoded.get("email"),
+                display_name=display_name,
+            )
+        except ValidationError:
+            # Zepsute dane w tokenie (dziwny email, znaki sterujące w name)
+            # nie mogą blokować pierwszego logowania — konto powstaje puste,
+            # user uzupełni profil przez PUT /me.
+            payload = UserCreate(firebase_uid=firebase_uid)
+        user = user_service.create_from_firebase(db, payload)
+
+    # Klucz dla rate-limitera: zalogowani liczeni per konto, nie per IP.
+    request.state.firebase_uid = firebase_uid
+    return user
+
+
+def get_current_user(
+    user: User = Depends(get_current_user_allow_inactive),
+) -> User:
+    """Standardowa dependency dla endpointów: zweryfikowany, AKTYWNY user."""
+    if not user.is_active:
+        raise ApiError.forbidden(ErrorCode.USER_INACTIVE)
+    return user
+
+
+def delete_firebase_account(firebase_uid: str) -> None:
+    """Usuwa konto po stronie Firebase (RODO / wymóg Apple).
+
+    Wołane przez router przy DELETE /me — router korzysta z core/auth,
+    ale nadal nie wie, że pod spodem jest Firebase.
+    """
+    firebase_auth.delete_user(firebase_uid)

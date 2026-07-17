@@ -1,160 +1,96 @@
-import os
+"""Warstwa bazy danych — URL budowany według settings.ENV.
+
+    local → SQLite (plik; tabele tworzą się same przy starcie — bez migracji)
+    dev   → PostgreSQL, URL składany z części POSTGRES_* (psycopg3)
+    prod  → PostgreSQL, gotowy DATABASE_URL (GCP Secret Manager)
+
+Produkcyjną bazą jest wyłącznie PostgreSQL (decyzja 0003) — SQLite to
+wygoda lokalnego developmentu, nie wspierany backend.
+
+create_engine nie otwiera połączenia — pierwsze połączenie leci przy pierwszym
+zapytaniu, więc import modułu nie wymaga działającej bazy.
+"""
+
 from collections.abc import Generator
 from contextlib import contextmanager
 
 from sqlalchemy import create_engine, text
-from sqlalchemy.engine import URL, Engine
+from sqlalchemy.engine import URL
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
+from services.app.core.config import settings
 
-# ── Base model ────────────────────────────────────────────────────────────────
 
 class Base(DeclarativeBase):
-    """Shared declarative base — all ORM models inherit from this."""
-    pass
+    """Wspólna baza deklaratywna — wszystkie modele ORM dziedziczą stąd."""
 
 
-# ── Connector ─────────────────────────────────────────────────────────────────
+def _build_url() -> URL | str:
+    if settings.ENV == "local":
+        return f"sqlite:///{settings.SQLITE_PATH}"
 
-class DatabaseConnector:
-    """
-    Factory for SQLAlchemy engines and sessions.
-
-    Configuration is done entirely through environment variables.
-    The engine is created lazily on first use, not at import time,
-    so missing env vars don't crash the process during startup.
-
-    Supported connectors (set via DB_CONNECTOR):
-        sqlite          File-based SQLite (path via SQLITE_PATH, default: database.db)
-        sqlite-local    Same as sqlite but uses SQLITE_LOCAL_PATH (default: local.db)
-        mysql / msql    MySQL via PyMySQL
-        postgres /
-        postgresql      PostgreSQL via psycopg3
-
-    Credentials (MySQL / PostgreSQL):
-        AUTH_USERNAME   Database username
-        AUTH_PASSWORD   Database password
-        MYSQL_HOST / POSTGRES_HOST
-        MYSQL_PORT / POSTGRES_PORT  (defaults: 3306 / 5432)
-        MYSQL_DB   / POSTGRES_DB    (default: "database")
-    """
-
-    def __init__(self) -> None:
-        self.connector: str = os.getenv("DB_CONNECTOR", "sqlite").lower()
-        self._engine: Engine | None = None
-        self._session_factory: sessionmaker | None = None
-
-    # ── Internal builders ─────────────────────────────────────────────────────
-
-    def _require_env(self, *names: str) -> dict[str, str]:
-        """Return {name: value} for each env var, raise clearly if any are missing."""
-        missing = [n for n in names if not os.getenv(n)]
-        if missing:
-            raise EnvironmentError(
-                f"Missing required environment variable(s) for "
-                f"connector '{self.connector}': {', '.join(missing)}"
-            )
-        return {n: os.environ[n] for n in names}
-
-    def _build_url(self) -> URL | str:
-        if self.connector == "sqlite":
-            path = os.getenv("SQLITE_PATH", "database.db")
-            return f"sqlite:///{path}"
-
-        if self.connector == "sqlite-local":
-            path = os.getenv("SQLITE_LOCAL_PATH", "local.db")
-            return f"sqlite:///{path}"
-
-        if self.connector in {"mysql", "msql"}:
-            env = self._require_env("AUTH_USERNAME", "AUTH_PASSWORD", "MYSQL_HOST")
-            return URL.create(
-                drivername="mysql+pymysql",
-                username=env["AUTH_USERNAME"],
-                password=env["AUTH_PASSWORD"],
-                host=env["MYSQL_HOST"],
-                port=int(os.getenv("MYSQL_PORT", "3306")),
-                database=os.getenv("MYSQL_DB", "database"),
-            )
-
-        if self.connector in {"postgres", "postgresql"}:
-            env = self._require_env("AUTH_USERNAME", "AUTH_PASSWORD", "POSTGRES_HOST")
-            return URL.create(
-                drivername="postgresql+psycopg",
-                username=env["AUTH_USERNAME"],
-                password=env["AUTH_PASSWORD"],
-                host=env["POSTGRES_HOST"],
-                port=int(os.getenv("POSTGRES_PORT", "5432")),
-                database=os.getenv("POSTGRES_DB", "database"),
-            )
-
-        raise ValueError(f"Unsupported DB_CONNECTOR: '{self.connector}'")
-
-    # ── Public API ────────────────────────────────────────────────────────────
-
-    def get_engine(self) -> Engine:
-        if self._engine is not None:
-            return self._engine
-
-        is_sqlite = self.connector.startswith("sqlite")
-
-        self._engine = create_engine(
-            self._build_url(),
-            # Verify connections are alive before handing them out of the pool.
-            pool_pre_ping=True,
-            # SQLite doesn't benefit from a pool — use StaticPool instead.
-            poolclass=None if not is_sqlite else None,
-            # Keep a small number of persistent connections ready.
-            pool_size=5 if not is_sqlite else 1,
-            # Allow bursting beyond pool_size under load.
-            max_overflow=10 if not is_sqlite else 0,
-            # Drop a connection if it has been checked out for more than 30 min.
-            pool_timeout=30,
-            # Recycle connections older than 1 hour to avoid stale TCP issues.
-            pool_recycle=3600,
-            # Echo SQL to stdout — reads from env so you toggle it without code changes.
-            echo=os.getenv("DB_ECHO", "false").lower() == "true",
+    if settings.ENV == "dev":
+        return URL.create(
+            drivername="postgresql+psycopg",
+            username=settings.POSTGRES_USER,
+            password=settings.POSTGRES_PASSWORD,
+            host=settings.POSTGRES_HOST,
+            port=settings.POSTGRES_PORT,
+            database=settings.POSTGRES_DB,
         )
-        return self._engine
 
-    def get_session_factory(self) -> sessionmaker:
-        if self._session_factory is None:
-            self._session_factory = sessionmaker(
-                bind=self.get_engine(),
-                autocommit=False,
-                autoflush=False,
-                expire_on_commit=False,  # avoids extra SELECT after commit
-            )
-        return self._session_factory
-
-    def ping(self) -> bool:
-        """Return True if the database is reachable, False otherwise."""
-        try:
-            with self.get_engine().connect() as conn:
-                conn.execute(text("SELECT 1"))
-            return True
-        except Exception:
-            return False
+    # prod — URL w całości z Secret Managera (komplet pilnowany w config.py)
+    return settings.DATABASE_URL
 
 
-# ── Module-level singletons ───────────────────────────────────────────────────
-# Nothing is actually connected here — the engine is built on first use.
+_is_sqlite = settings.ENV == "local"
 
-_connector = DatabaseConnector()
+engine = create_engine(
+    _build_url(),
+    # Weryfikuj, że połączenie żyje, zanim pula je wyda (Cloud SQL ucina bezczynne).
+    pool_pre_ping=True,
+    echo=settings.DB_ECHO,
+    **(
+        # SQLite: lokalny plik — bez tuningu puli; check_same_thread=False,
+        # bo FastAPI obsługuje sync endpointy w puli wątków.
+        {"connect_args": {"check_same_thread": False}}
+        if _is_sqlite
+        # PostgreSQL: mała stała pula + zapas na skoki ruchu; odświeżanie
+        # połączeń starszych niż 1h unika martwych TCP po stronie proxy.
+        else {"pool_size": 5, "max_overflow": 10, "pool_recycle": 3600}
+    ),
+)
+
+SessionLocal = sessionmaker(
+    bind=engine,
+    autocommit=False,
+    autoflush=False,
+    expire_on_commit=False,
+)
+
+
+def create_all_for_local() -> None:
+    """ENV=local: tabele tworzą się same przy starcie (wołane z lifespanu).
+
+    Na dev/prod schemat jest zarządzany przez database/sql (docelowo Alembic) —
+    tam ta funkcja świadomie nic nie robi.
+    """
+    if settings.ENV != "local":
+        return
+    from services.app.users import models  # noqa: F401 — rejestruje modele w Base.metadata
+
+    Base.metadata.create_all(bind=engine)
 
 
 def get_db() -> Generator[Session, None, None]:
-    """
-    FastAPI dependency that yields a SQLAlchemy session.
+    """FastAPI dependency: sesja per request.
 
-    Usage:
-        @router.get("/")
-        def my_route(db: Session = Depends(get_db)):
-            ...
+    Celowo NIE commituje — commit należy do warstwy service, żeby transakcja
+    kończyła się dokładnie tam, gdzie kończy się operacja domenowa.
     """
-    session = _connector.get_session_factory()()
+    session = SessionLocal()
     try:
         yield session
-        session.commit()
     except Exception:
         session.rollback()
         raise
@@ -164,19 +100,23 @@ def get_db() -> Generator[Session, None, None]:
 
 @contextmanager
 def db_session() -> Generator[Session, None, None]:
-    """
-    Context manager for use outside of FastAPI (scripts, workers, tests).
-
-    Usage:
-        with db_session() as db:
-            db.add(some_model)
-    """
-    session = _connector.get_session_factory()()
+    """Do użytku poza FastAPI (skrypty, workery). Te same zasady co get_db:
+    commit robisz jawnie (najlepiej przez warstwę service)."""
+    session = SessionLocal()
     try:
         yield session
-        session.commit()
     except Exception:
         session.rollback()
         raise
     finally:
         session.close()
+
+
+def ping() -> bool:
+    """True, jeśli baza odpowiada — używane przez /health."""
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return True
+    except Exception:
+        return False
