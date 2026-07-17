@@ -8,6 +8,11 @@ dostaje 422. Tutaj ucinamy na progu:
 - body bez Content-Length (chunked) → 411 length_required; uczciwe klienty
   zawsze deklarują długość, a h11 egzekwuje ramkowanie, więc zaniżyć się nie da.
 
+Dwa progi: JSON (64 KB starcza na największy legalny payload) i multipart
+(uploady plików — 3 MB kryje 2 MB avatara + narzut ramek multipart). Spoofing
+content-type na multipart podnosi napastnikowi limit tylko do 3 MB — nadal
+o rzędy wielkości za mało na zalanie RAM-u.
+
 Czysty ASGI (nie BaseHTTPMiddleware) — działa przed routingiem, auth i limiterem,
 czyli chroni także requesty nieuwierzytelnione. Rejestracja: server.py.
 """
@@ -16,9 +21,8 @@ import json
 
 from services.app.core.errors import ErrorCode
 
-# 64 KB z zapasem starcza na największy legalny payload (bio 2000 znaków
-# unicode + reszta pól to ułamek tego).
 MAX_BODY_SIZE = 64 * 1024
+MAX_MULTIPART_BODY_SIZE = 3 * 1024 * 1024
 
 _METHODS_WITH_BODY = {"POST", "PUT", "PATCH"}
 
@@ -33,10 +37,12 @@ class BodySizeLimitMiddleware:
             return await self.app(scope, receive, send)
 
         content_length = None
+        is_multipart = False
         for name, value in scope.get("headers") or []:
             if name == b"content-length":
                 content_length = value
-                break
+            elif name == b"content-type" and value.lower().startswith(b"multipart/form-data"):
+                is_multipart = True
 
         if content_length is None:
             # transfer-encoding: chunked albo brak nagłówka — nie da się
@@ -48,7 +54,8 @@ class BodySizeLimitMiddleware:
         except ValueError:
             return await self._reject(send, 411, ErrorCode.LENGTH_REQUIRED)
 
-        if declared > self.max_body_size:
+        limit = MAX_MULTIPART_BODY_SIZE if is_multipart else self.max_body_size
+        if declared > limit:
             return await self._reject(send, 413, ErrorCode.PAYLOAD_TOO_LARGE)
 
         return await self.app(scope, receive, send)

@@ -13,7 +13,7 @@ Aplikacja (web/PWA, później mobile)
         ▼
 FastAPI (Cloud Run)  ── weryfikuje token Firebase, dalej pracuje na users.id
         │
-        ├── moduł users         (tożsamość, profil, miasto)
+        ├── moduł users         (tożsamość, profil, avatar)
         ├── moduł games         (proxy + cache do BGG)   [dojdzie]
         ├── moduł shelf         (półka, gry usera)       [dojdzie]
         ├── moduł matchmaking   (kto w okolicy ma X)     [dojdzie]
@@ -21,6 +21,7 @@ FastAPI (Cloud Run)  ── weryfikuje token Firebase, dalej pracuje na users.id
         │
         ▼
 PostgreSQL (Cloud SQL) — jedna baza, users.id jako kotwica dla wszystkiego
+Firebase Storage (GCS) — avatary graczy (webp, publiczny odczyt)
 Redis — cache danych z BGG (24h)
 Secret Manager — hasła do bazy, klucz admina Firebase
 ```
@@ -33,8 +34,9 @@ Secret Manager — hasła do bazy, klucz admina Firebase
 - Moduły gadają ze sobą przez warstwę `service`, nie sięgają sobie do modeli.
   Dzięki temu późniejsze wydzielenie modułu do osobnego serwisu jest łatwe.
 - Każdy moduł "posiada" swoje tabele; brak dzikich joinów w poprzek domen.
-- Firebase dotykany tylko w `core/auth.py`. Reszta kodu nie wie, że istnieje.
-  Szczegóły integracji: `docs/FIREBASE.md`.
+- Firebase Auth dotykany tylko w `core/auth.py`, Storage tylko w `core/storage.py`
+  i `users/services/avatar_service.py`. Reszta kodu nie wie, że Firebase istnieje.
+  Szczegóły integracji: `docs/FIREBASE.md`, decyzja: `decisions/0005-firebase-storage-avatary.md`.
 - Autoryzacja (kto co może) zawsze po naszej stronie — tożsamość bierzemy
   ze zweryfikowanego tokenu, nigdy z tego, co klient poda w payloadzie.
 - API bez wersjonowania w URL (brak `/v1/`) — jeden klient (nasz front),

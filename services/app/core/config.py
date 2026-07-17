@@ -64,6 +64,9 @@ class Settings(BaseSettings):
     # Ścieżka do klucza admina (sam plik NIGDY nie trafia do repo)
     FIREBASE_ADMIN_CREDENTIALS: str
 
+    # Nazwa bucketa Firebase Storage (sama nazwa, bez prefiksu gs://)
+    FIREBASE_STORAGE_BUCKET: str
+
     # ── HTTP ──────────────────────────────────────────────────────────────────
 
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:4173"

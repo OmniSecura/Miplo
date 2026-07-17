@@ -5,7 +5,7 @@ więc cudzych danych nie da się tknąć nawet celowo — żaden payload nie zaw
 identyfikatora konta.
 """
 
-from fastapi import APIRouter, Depends, Path, Request, Response, status
+from fastapi import APIRouter, Depends, File, Path, Request, Response, UploadFile, status
 from sqlalchemy.orm import Session
 
 from services.app.core.auth import (
@@ -18,12 +18,13 @@ from services.app.core.errors import ApiError, ErrorCode
 from services.app.core.security.limiter import (
     DELETE_LIMIT,
     READ_LIMIT,
+    UPLOAD_LIMIT,
     WRITE_LIMIT,
     limiter,
 )
 from services.app.users.models import User
 from services.app.users.schemas import UserProfile, UserPublic, UserUpdate
-from services.app.users.services import user_service
+from services.app.users.services import avatar_service, user_service
 
 users_router = APIRouter(tags=["users"])
 
@@ -48,6 +49,37 @@ def update_my_profile(
     db: Session = Depends(get_db),
 ) -> User:
     return user_service.update_profile(db, current_user, payload)
+
+
+@users_router.post("/me/avatar", response_model=UserProfile)
+@limiter.limit(UPLOAD_LIMIT)
+async def upload_my_avatar(
+    request: Request,
+    response: Response,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> User:
+    """Upload avatara (multipart/form-data, pole `file`).
+
+    Celowo osobno od PUT /me (JSON): avatar_url NIE jest edytowalny przez
+    JSON — zawsze pochodzi z naszego Storage, ustawiany przez backend.
+    """
+    avatar_url = await avatar_service.upload_avatar(file, current_user.firebase_uid)
+    return user_service.update_avatar_url(db, current_user, avatar_url)
+
+
+@users_router.delete("/me/avatar", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit(WRITE_LIMIT)
+def delete_my_avatar(
+    request: Request,
+    response: Response,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    """Usuwa avatar: blob z bucketa (idempotentnie) + avatar_url = NULL."""
+    avatar_service.delete_avatar(current_user.firebase_uid)
+    user_service.update_avatar_url(db, current_user, None)
 
 
 @users_router.post("/me/deactivate", status_code=status.HTTP_204_NO_CONTENT)
