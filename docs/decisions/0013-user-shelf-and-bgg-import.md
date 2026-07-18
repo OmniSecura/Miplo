@@ -2,6 +2,10 @@
 
 Status: przyjęte
 
+Uzupełnienie 2026-07-18: etap przejściowy z punktu 7 zakończył ADR 0014.
+`import_ratings=true` i sortowanie Miplo są obecnie zaimplementowane; zachowany
+opis dokumentuje zachowanie sprzed wdrożenia domeny ratings.
+
 ## Kontekst
 
 Miplo potrzebuje prywatnego opisu posiadanego egzemplarza gry, publicznej oferty

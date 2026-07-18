@@ -43,9 +43,15 @@ szczegółów. Dzięki temu kliknięcie gry dociąga opis i okładkę, nawet je�
 rekord powstał przed chwilą podczas importu. TTL pełnych szczegółów wynosi
 `BGG_CACHE_TTL_SECONDS` (domyślnie 24 h).
 
+Upsert `/thing` korzysta z jawnego `BGG_UPDATABLE_FIELDS`. Aktualizuje wyłącznie
+dane pochodzące z BGG (`title`, opis, rok, gracze, czas, rating/weight, liczniki,
+ranking, cover i `cached_at`). Nigdy nie dotyka `miplo_rating`, liczników Miplo,
+wymiarów, mediów, barcode ani modelu 3D.
+
 `GET /api/games/{slug}` przyjmuje również zwykłą nazwę. FastAPI dekoduje URL,
-a backend normalizuje `Brass Birmingham` do `brass-birmingham`. Stary cache jest
-zwracany od razu i odświeżany best-effort w tle z nową sesją bazy.
+a backend normalizuje `Brass Birmingham` do `brass-birmingham`. Publiczny odczyt
+nie uruchamia nietrwałej pracy po odpowiedzi; stary cache odświeża chroniony
+`GET /api/games/bgg/{bgg_id}` albo import katalogu.
 
 Brak `BGG_API_TOKEN` nie blokuje startu. Katalog, slug i barcode działają,
 a operacje wymagające BGG zwracają `503 bgg_not_configured`.
@@ -53,6 +59,9 @@ a operacje wymagające BGG zwracają `503 bgg_not_configured`.
 Klient udostępnia także `fetch_games()` dla maksymalnie 20 BGG ID w jednym
 `/thing?id=...&stats=1`. Korzysta z niego import kolekcji w domenie `shelf`, aby
 200 gier nie oznaczało 200 requestów do BGG.
+
+XML jest pobierany strumieniowo z limitem 5 MB i parsowany przez `defusedxml`;
+encje/DTD, nadmiar danych, redirecty i nieoficjalne hosty okładek są odrzucane.
 
 ### Warunki korzystania z BGG
 
@@ -178,6 +187,11 @@ publicznego pliku. Autor może wycofać swoją oczekującą propozycję, ale nie
 usunąć zaakceptowanego wcześniej modelu. Odrzucenie propozycji także przywraca
 stan `ready` starego modelu.
 
+Generowanie działa podczas aktywnego requestu w ograniczonym slocie CPU, a nie
+w FastAPI `BackgroundTasks` — Cloud Run nie gwarantuje pracy po odpowiedzi.
+Odpowiedź `202` przychodzi po ustawieniu `awaiting_review` albo `failed`.
+Osierocony `pending`/`processing` przestaje blokować nową propozycję po 15 minutach.
+
 Generator tworzy dwa node'y (`BoxBase`, `BoxLid`) bez CSG. Tekstury boków są
 dzielone UV między widoczny pasek denka i nałożone wieko. Sześć zoptymalizowanych
 JPEG jest osadzonych wewnątrz jednego GLB — oryginały nie trafiają na dysk ani
@@ -271,7 +285,8 @@ kopię pliku SQLite. Na dev/prod zastosuj migrację
 `database/sql/migrations/0003_game_barcodes.sql` i
 `database/sql/migrations/0004_game_language_enum.sql` oraz
 `database/sql/migrations/0005_exact_barcode_formats.sql` (docelowo Alembic).
-Tabela półki jest dodawana później przez `0006_shelf_items.sql`.
+Tabela półki jest dodawana przez `0006_shelf_items.sql`, a oceny i agregaty
+przez `0007_ratings.sql`.
 
 ## Testy
 

@@ -6,6 +6,7 @@ przykrywki. GLB korzysta wyłącznie z podstawowego glTF 2.0 oraz osadzonych JPE
 więc nie wymaga rozszerzenia EXT_texture_webp po stronie klienta.
 """
 
+import asyncio
 import io
 import json
 import logging
@@ -19,6 +20,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from starlette.concurrency import run_in_threadpool
 
 from services.app.core.database import db_session
+from services.app.core.config import settings
 from services.app.core.errors import ApiError, ErrorCode
 from services.app.core.storage import get_bucket
 from services.app.games.models import Game
@@ -37,6 +39,7 @@ _CHUNK_SIZE = 64 * 1024
 _WALL_CM = 0.20
 _CLEARANCE_CM = 0.05
 _LID_DEPTH_RATIO = 0.96
+_GENERATION_SLOTS = asyncio.Semaphore(settings.MODEL_GENERATION_CONCURRENCY)
 
 
 def _candidate_path(game_id: int, job_id: str) -> str:
@@ -90,7 +93,8 @@ async def read_validated_sides(files: dict[str, UploadFile | None]) -> dict[str,
     total = 0
     for name in SIDE_NAMES:
         file = files[name]
-        assert file is not None
+        if file is None:  # defense in depth; normalnie odrzucone wyżej
+            raise ApiError.bad_request(ErrorCode.ALL_SIDES_REQUIRED)
         if file.content_type not in ALLOWED_CONTENT_TYPES:
             raise ApiError.bad_request(
                 ErrorCode.INVALID_FILE_TYPE,
@@ -637,17 +641,26 @@ async def generate_and_upload(
     dimensions_cm: tuple[float, float, float],
     rotations: dict[str, int] | None = None,
 ) -> None:
-    """BackgroundTask: zawsze kończy stanem awaiting_review albo failed."""
+    """Ograniczony job requestowy: zawsze kończy awaiting_review albo failed."""
     candidate_path = _candidate_path(game_id, job_id)
     uploaded = False
+    slot_acquired = False
     try:
+        # Timeout dotyczy wyłącznie oczekiwania na wolny slot. Nie anulujemy
+        # rozpoczętego wątku Pillow/GLB, bo wątek nadal używałby buforów po tym,
+        # jak coroutine wykona cleanup — prowadziłoby to do race condition.
+        await asyncio.wait_for(
+            _GENERATION_SLOTS.acquire(),
+            timeout=settings.MODEL_GENERATION_TIMEOUT_SECONDS,
+        )
+        slot_acquired = True
         if not _set_processing(game_id, job_id):
             return
         glb = await run_in_threadpool(build_glb, raw_sides, dimensions_cm, rotations)
         await run_in_threadpool(_upload_private, candidate_path, glb)
         uploaded = True
         if not _set_awaiting_review(game_id, job_id, candidate_path):
-            _delete(candidate_path)
+            await run_in_threadpool(_delete, candidate_path)
     except Exception:
         logger.exception("Generowanie modelu 3D gry %d nie powiodło się", game_id)
         if uploaded:
@@ -660,4 +673,6 @@ async def generate_and_upload(
         except Exception:
             logger.exception("Nie udało się oznaczyć modelu gry %d jako failed", game_id)
     finally:
+        if slot_acquired:
+            _GENERATION_SLOTS.release()
         raw_sides.clear()

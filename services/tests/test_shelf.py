@@ -32,6 +32,7 @@ from services.app.shelf.schemas import (
     ShelfItemUpdate,
 )
 from services.app.shelf.services import shelf_service
+from services.app.ratings.models import GameRating
 from services.app.users.models import User
 
 
@@ -271,19 +272,35 @@ class ShelfServiceTests(unittest.TestCase):
         self.assertEqual((result.imported, result.skipped, result.failed), (1, 1, 1))
         self.assertEqual(result.total_in_bgg, 3)
 
-    def test_ratings_import_is_explicitly_deferred(self) -> None:
-        with self.assertRaises(ApiError) as context:
-            asyncio.run(
+    def test_collection_import_can_import_bgg_ratings_without_overwriting(self) -> None:
+        collection = [
+            bgg_client.BggCollectionItem(101, "Game 1", 2020, Decimal("8.3")),
+            bgg_client.BggCollectionItem(102, "Game 2", 2021, None),
+        ]
+        with (
+            patch.object(bgg_client, "fetch_collection", new=AsyncMock(return_value=collection)),
+            patch.object(
+                game_service,
+                "get_or_fetch_games_batch",
+                new=AsyncMock(return_value={101: self.games[0], 102: self.games[1]}),
+            ),
+        ):
+            result = asyncio.run(
                 shelf_service.import_bgg_collection(
                     self.db,
                     self.user.id,
                     CollectionImportRequest(bgg_username="valid_user", import_ratings=True),
                 )
             )
-        self.assertEqual(
-            context.exception.detail["error_code"],
-            ErrorCode.RATINGS_NOT_AVAILABLE.value,
+        rating = self.db.scalar(
+            select(GameRating).where(
+                GameRating.user_id == self.user.id,
+                GameRating.game_id == self.games[0].id,
+            )
         )
+        self.assertEqual(result.ratings_imported, 1)
+        self.assertEqual(rating.rating, Decimal("8.5"))
+        self.assertEqual(rating.source, "bgg_import")
 
     def test_database_cascades_shelf_items_on_user_delete(self) -> None:
         item = self._add(self.games[0])

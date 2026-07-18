@@ -47,3 +47,17 @@ class User(Base):
         back_populates="user",
         passive_deletes=True,
     )
+    ratings: Mapped[list["GameRating"]] = relationship(  # type: ignore[name-defined]
+        back_populates="author",
+        passive_deletes=True,
+    )
+    review_reports: Mapped[list["ReviewReport"]] = relationship(  # type: ignore[name-defined]
+        back_populates="reporter",
+        passive_deletes=True,
+    )
+
+
+# User jest importowany przez praktycznie każdą domenę jako pierwszy. Rejestrujemy
+# modele zależne tutaj, aby relacje tekstowe SQLAlchemy były rozwiązywalne także
+# w izolowanych skryptach i testach, które nie uruchamiają create_all_for_local().
+from services.app.ratings.models.rating import GameRating, ReviewReport  # noqa: E402,F401

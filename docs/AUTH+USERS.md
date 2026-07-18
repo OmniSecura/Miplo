@@ -18,8 +18,11 @@ Authorization: Bearer <ID_TOKEN>
         ▼
 get_current_user()                        core/auth.py
   1. brak nagłówka?          → 401 unauthorized
-  2. verify_id_token()       → 401 token_expired  (frontend: odśwież przez SDK)
-                             → 401 invalid_token  (podróbka/revoked/uszkodzony)
+  2. verify_id_token(check_revoked=True)
+                             → 401 token_expired  (frontend: odśwież przez SDK)
+                             → 401 token_revoked  (odwołany/disabled/usunięty)
+                             → 401 invalid_token  (podróbka/uszkodzony)
+                             → 503 auth_provider_unavailable
   3. SELECT po firebase_uid  → brak = pierwszy login = INSERT (find-or-create;
                                wyścig dwóch requestów obsłużony przez IntegrityError)
   4. is_active == False?     → 403 user_inactive
@@ -33,7 +36,7 @@ identyfikatora konta.
 
 | Plik | Rola |
 |---|---|
-| `core/auth.py` | JEDYNE miejsce dotykające Firebase: `init_firebase()` (lifespan, fail-fast), `get_current_user()` (dependency), `delete_firebase_account()` |
+| `core/auth.py` | JEDYNE miejsce dotykające Firebase: init, weryfikacja z revocation check oraz bezpieczny cykl usunięcia konta |
 | `core/errors.py` | Enum `ErrorCode` (kontrakt z frontendem) + `ApiError` ze skrótami (`unauthorized()`, `forbidden()`, `not_found()`, `bad_request()`, `too_many_requests()`) |
 | `core/security/limiter.py` | Limity nazwane (READ/WRITE/DELETE), klucz per firebase_uid dla zalogowanych, 429 z kodem błędu. Każdy endpoint MUSI mieć dekorator |
 | `users/services/user_service.py` | Cały CRUD usera; jedyne miejsce z commitami |
@@ -167,10 +170,9 @@ Warstwy obrony, od zewnątrz do środka:
    przez `UserCreate`; jak nie przechodzą, konto powstaje puste (fallback
    w `core/auth.py`), nigdy 500.
 
-**Znana luka (świadoma):** limity per endpoint działają dopiero PO przejściu
-auth, więc flood nieprawidłowymi tokenami nie jest limitowany na poziomie
-aplikacji (weryfikacja JWT jest tania i lokalna, ale to wciąż CPU). Na
-produkcji domknąć na poziomie infrastruktury (Cloud Armor / LB rate limit).
+Przed routingiem działa dodatkowo `GlobalIpRateLimitMiddleware`. Liczy także
+requesty odrzucone przez auth i Pydantic, więc błędne tokeny oraz payloady nie
+omijają limitu. Dekoratory SlowAPI pozostają dokładniejszą drugą warstwą.
 
 ## Rate limiting
 
@@ -179,15 +181,15 @@ produkcji domknąć na poziomie infrastruktury (Cloud Armor / LB rate limit).
 - Endpoint musi mieć w sygnaturze `request: Request` **i** `response: Response`
   (wymóg slowapi przy `headers_enabled=True` — bez tego 500).
 - Klucz: zalogowany per `firebase_uid`, anonim per IP (NAT nie zbija limitu wszystkim).
-- Dev: liczniki w pamięci procesu; prod: `RATE_LIMIT_STORAGE_URI=redis://...`
-  (wspólne liczniki dla wielu instancji Cloud Run).
+- Dev: liczniki w pamięci procesu; prod wymusza `redis://`/`rediss://` przy
+  starcie, więc wszystkie instancje Cloud Run korzystają ze wspólnych liczników.
 - SlowAPIMiddleware celowo nieużywany — nie widzi endpointów w FastAPI ≥0.139,
   więc "globalny default limit" byłby fikcją. Dekorator na każdym endpoincie.
 
 ## Usuwanie konta (RODO / wymóg Apple)
 
-`DELETE /me` → (1) avatar z bucketa (padnięcie Storage = tylko warning, nie
-blokuje usunięcia danych), (2) twarde `DELETE` w naszej bazie, (3) `delete_user`
-w Firebase. Kolejność świadoma: gdy krok 3 padnie, dane osobowe z naszej bazy
-już nie istnieją, a user przy kolejnym logowaniu dostałby najwyżej świeży,
-pusty profil.
+`DELETE /me` → (1) konto Firebase zostaje disabled i jego refresh tokeny są
+odwołane, (2) avatar i dane SQL są usuwane, (3) tożsamość Firebase jest usuwana.
+Jeśli krok SQL zawiedzie, backend best-effort ponownie włącza Firebase. Jeśli
+finalne `delete_user` zawiedzie, konto pozostaje disabled, a `check_revoked=True`
+uniemożliwia odtworzenie lokalnego profilu starym tokenem.

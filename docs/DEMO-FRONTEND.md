@@ -97,6 +97,11 @@ Authorization: Bearer <Firebase ID token>
    - CTA logowania dla działań społecznościowych;
    - formularze propozycji ukryj, gdy
      `community_contributions_enabled === false`.
+   - pokaż osobne wyniki BGG i Miplo, liczbę ocen oraz `combined_rating`;
+   - jeśli `miplo_rating` jest `null`, pokaż „Za mało ocen” zamiast `0`;
+   - sekcja recenzji: filtry, sort, paginacja i zasłonięcie spoilerów;
+   - zalogowany user widzi formularz 1–10 co 0.5 oraz może edytować/usunąć
+     własną ocenę na podstawie `my_rating`/`my_review`.
 
 5. Profil publiczny `/u/:tag`
    - `display_name`, `tag`, avatar, miasto, bio i data dołączenia;
@@ -128,7 +133,7 @@ Authorization: Bearer <Firebase ID token>
 9. Moja półka `/me/shelf`
    - lista lub grid posiadanych gier z paginacją;
    - filtry: wypożyczalność, tytuł, stan egzemplarza i liczba graczy;
-   - sortowanie: ostatnio dodane, tytuł, rating BGG;
+   - sortowanie: ostatnio dodane, tytuł, rating BGG i rating Miplo;
    - karta pokazuje okładkę, tytuł, stan i czy gra jest dostępna do wypożyczenia;
    - edycja „Mojej kopii”: `lendable`, kaucja, publiczne warunki, stan i prywatna
      notatka;
@@ -140,7 +145,8 @@ Authorization: Bearer <Firebase ID token>
     - formularz z nickiem BGG i informacją, że operacja może potrwać do 3 minut;
     - podczas requestu pokaż nieblokujący progress/spinner i nie wysyłaj drugi raz;
     - po sukcesie pokaż liczniki `imported`, `skipped`, `failed`, `total_in_bgg`;
-    - nie oferuj jeszcze importu ocen (`import_ratings` wysyłaj jako `false`);
+    - checkbox „Importuj również moje oceny z BGG” steruje `import_ratings`;
+    - po sukcesie pokaż także licznik `ratings_imported`;
     - import tylko dodaje gry i nigdy nie usuwa istniejących pozycji.
 
 11. Publiczna półka na profilu `/u/:tag/shelf`
@@ -149,11 +155,17 @@ Authorization: Bearer <Firebase ID token>
     - pokazuje stan egzemplarza, a kaucję i warunki tylko dla `lendable=true`;
     - nigdy nie oczekuje pola prywatnej notatki `notes`.
 
+12. Moje oceny `/me/ratings`
+    - paginacja, filtr „z recenzją” i sortowanie;
+    - karta pokazuje grę, ocenę, recenzję, źródło `miplo/bgg_import`;
+    - kafle statystyk pobierz z `/api/me/ratings/stats`;
+    - ukrytą ocenę oznacz neutralnym statusem moderacji, bez `hidden_reason`.
+
 Na stronie szczegółów gry użyj `on_my_shelf` i `my_shelf_item`. Jeśli gra nie jest
 na półce, pokaż „Dodaj na półkę”. Jeśli jest, pokaż sekcję „Moja kopia” z edycją
 bez wykonywania osobnego requestu sprawdzającego.
 
-12. Dodawanie gry custom `/games/new`
+13. Dodawanie gry custom `/games/new`
    - formularz multipart: tytuł, opis, gracze, czas, rok, typy, wymiary,
      bezpieczny link HTTPS do instrukcji i opcjonalna okładka;
    - `game_types` wysyłaj jako JSON string, np. `["Euro","Ekonomiczna"]`;
@@ -163,27 +175,27 @@ bez wykonywania osobnego requestu sprawdzającego.
      nie można pobrać listy oczekujących gier użytkownika. Nie symuluj tej funkcji
      jako działającej z prawdziwym API.
 
-13. Edycja własnej gry custom
+14. Edycja własnej gry custom
     - używa `PUT /api/games/{slug}` jako multipart;
     - dostępna tylko właścicielowi customowej gry;
     - zmiana ponownie kieruje grę do moderacji i może czasowo ukryć ją w katalogu;
     - nowy slug zawsze bierz z odpowiedzi po zapisie.
 
-14. Galeria społecznościowa
+15. Galeria społecznościowa
     - upload jednego JPEG/PNG/WEBP do 2 MB i opcjonalny podpis;
     - po `202` pokaż status „oczekuje na akceptację”;
     - nie dodawaj zdjęcia do publicznej galerii przed akceptacją;
     - odpowiedź zwraca `public_id`, który można wykorzystać do wycofania własnej
       propozycji.
 
-15. Propozycja barcode
+16. Propozycja barcode
     - formularz ma pole barcode i dropdown języka;
     - dozwolone języki: `pl` — Polski, `en` — Angielski;
     - wysyłaj `application/x-www-form-urlencoded`, nie JSON;
     - backend sprawdza format i sumę kontrolną EAN-8, UPC-A lub EAN-13;
     - propozycja ma status `pending` i staje się publiczna dopiero po moderacji.
 
-16. Generator modelu pudełka 3D
+17. Generator modelu pudełka 3D
     - jeden formularz z sześcioma wymaganymi zdjęciami: `front`, `back`, `left`,
       `right`, `top`, `bottom`;
     - pokaż graficzną instrukcję znaczenia każdej ścianki;
@@ -244,12 +256,26 @@ bez wykonywania osobnego requestu sprawdzającego.
 | POST | `/api/me/shelf/import` | tak | addytywny import kolekcji BGG |
 | GET | `/api/users/{tag}/shelf` | tak | publiczny widok półki innego usera |
 
+### Oceny i recenzje
+
+| Metoda | Endpoint | Auth | Zastosowanie |
+|---|---|---:|---|
+| GET | `/api/games/{slug}/ratings/summary` | opcjonalny | BGG, Miplo, rozkład i kontekst usera |
+| GET | `/api/games/{slug}/ratings` | opcjonalny | lista ocen i recenzji |
+| POST | `/api/games/{slug}/ratings` | tak | wystawienie oceny |
+| PUT | `/api/games/{slug}/ratings` | tak | edycja własnej oceny |
+| DELETE | `/api/games/{slug}/ratings` | tak | usunięcie własnej oceny |
+| POST | `/api/games/{slug}/ratings/{rating_id}/report` | tak | zgłoszenie recenzji; sukces `review_reported` |
+| GET | `/api/me/ratings` | tak | moje oceny |
+| GET | `/api/me/ratings/stats` | tak | moje statystyki ocen |
+| GET | `/api/users/{tag}/ratings` | tak | oceny aktywnego usera |
+
 Nie używaj w demo:
 
 - żadnego endpointu `/api/admin/moderation/*`;
 - `POST /api/games/import` — to chronione narzędzie operatorskie;
-- planowanych, ale jeszcze niezaimplementowanych domen ratings, matchmaking i venues;
-- `import_ratings=true` ani sortowania `miplo_rating` do czasu modułu ratings.
+- planowanych, ale jeszcze niezaimplementowanych domen matchmaking i venues;
+- reakcji helpful/not-helpful — nie należą do bieżącego API.
 
 ## 5. Najważniejsze modele odpowiedzi
 
@@ -314,6 +340,9 @@ zalogowany klient wywołuje `/api/games/bgg/{bgg_id}` i pobiera slug z odpowiedz
   "bgg_rank": 1,
   "users_rated": 59269,
   "is_expansion": false,
+  "miplo_rating": "8.2",
+  "miplo_ratings_count": 14,
+  "miplo_reviews_count": 6,
   "barcodes": [
     {"barcode": "5901549927658", "language_code": "pl"}
   ],
@@ -326,6 +355,8 @@ zalogowany klient wywołuje `/api/games/bgg/{bgg_id}` i pobiera slug z odpowiedz
     }
   ],
   "on_my_shelf": true,
+  "my_rating": "9.0",
+  "my_review": "Bardzo dobra gra ekonomiczna.",
   "my_shelf_item": {
     "lendable": true,
     "lending_deposit": "50.00",
@@ -382,16 +413,19 @@ wyjątków ani technicznego `details`. Obsłuż co najmniej:
 - `unauthorized`, `invalid_token`, `token_expired`;
 - `user_inactive`, `forbidden`, `not_game_owner`;
 - `game_not_found`, `barcode_not_found`, `game_title_exists`;
-- `game_already_on_shelf`, `game_not_on_shelf`, `ratings_not_available`;
+- `game_already_on_shelf`, `game_not_on_shelf`;
+- `already_rated`, `not_rated_yet`, `rating_hidden`, `review_already_reported`,
+  `cannot_report_own_review`;
 - `invalid_barcode_format`, `game_barcode_exists`, `barcode_proposal_pending`;
 - `contributions_locked`, `model_already_processing`, `gallery_limit_reached`;
 - `file_too_large`, `invalid_file_type`, `payload_too_large`;
 - `bgg_not_configured`, `bgg_unavailable`, `bgg_rate_limited`;
 - `rate_limit_exceeded`, `internal_error`.
 
-Aktualnie błędy walidacji frameworka `422` mogą mieć jeszcze domyślny format
-FastAPI `{"detail":[...]}`. Klient powinien tymczasowo obsłużyć oba kształty i
-przypisać drugi do ogólnego klucza `validation_error`.
+Walidacja frameworka `422` ma ten sam kształt co błędy domenowe:
+`error_code=validation_error`, a lista `details.errors` zawiera `field` i `rule`.
+Nie wyświetlaj `rule` bezpośrednio; mapuj je przez i18n. Udane zgłoszenie recenzji
+mapuje `message_code=review_reported` na komunikat sukcesu.
 
 Nie używaj toastu do wszystkiego. Błąd pola pokazuj pod polem, błąd strony w
 dedykowanym stanie, a toast stosuj do potwierdzeń i błędów akcji w tle.
@@ -421,6 +455,7 @@ opóźnienie 250–700 ms. Przygotuj:
 - półkę własną z co najmniej 8 pozycjami, publiczną półkę bez prywatnych notatek
   oraz wariant pustej półki;
 - grę z pełnym GLB, grę bez modelu i grę w `processing`;
+- grę z 0/1/3+ ocenami Miplo, recenzję ze spoilerem i pustą listę recenzji;
 - galerię, brak galerii i zablokowane kontrybucje;
 - znaleziony i nieznaleziony barcode;
 - profile aktywnego użytkownika i publiczny profil innego gracza;
@@ -439,6 +474,8 @@ obiektów z prawdziwym Firebase Auth w sposób, który mógłby trafić na produ
 - Szczegóły gry przełączają CTA/sekcję „Moja kopia” na podstawie `on_my_shelf`.
 - CRUD półki, filtry, statystyki i import BGG mają komplet stanów UX.
 - Publiczna półka nigdy nie wyświetla prywatnych notatek.
+- Ocenianie, edycja, usunięcie, zgłoszenie recenzji i próg trzech ocen mają
+  komplet stanów UX.
 - Custom game wysyła poprawny multipart i pokazuje oczekiwanie na moderację.
 - Galeria, barcode oraz model 3D mają jasny status zgłoszenia.
 - Formularz 3D wymaga sześciu zdjęć i oferuje rotacje 0/90/180/270.

@@ -32,6 +32,8 @@ cryptography==49.0.0
     #   pyjwt
 deprecated==1.3.1
     # via limits
+defusedxml==0.7.1
+    # via miplo (pyproject.toml)
 dnspython==2.8.0
     # via email-validator
 email-validator==2.3.0
@@ -104,7 +106,9 @@ idna==3.18
     #   httpx
     #   requests
 limits==5.8.0
-    # via slowapi
+    # via
+    #   miplo (pyproject.toml)
+    #   slowapi
 mako==1.3.12
     # via alembic
 markupsafe==3.0.3

@@ -271,7 +271,9 @@ def migrate(database_path: Path) -> tuple[bool, Path | None]:
                 copied = [column for column in GAME_COLUMNS if column in old_columns]
                 names = ", ".join(f'"{column}"' for column in copied)
                 connection.execute(
-                    f"INSERT INTO games_new ({names}) SELECT {names} FROM games"
+                    # `copied` jest przecięciem ze stałą allowlistą GAME_COLUMNS;
+                    # żaden fragment nie pochodzi od użytkownika.
+                    f"INSERT INTO games_new ({names}) SELECT {names} FROM games"  # nosec B608
                 )
                 connection.execute("DROP TABLE games")
                 connection.execute("ALTER TABLE games_new RENAME TO games")

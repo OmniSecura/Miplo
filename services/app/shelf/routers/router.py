@@ -29,7 +29,11 @@ from services.app.users.models import User
 shelf_router = APIRouter(tags=["shelf"])
 
 
-@shelf_router.get("/me/shelf", response_model=PaginatedShelf)
+@shelf_router.get(
+    "/me/shelf",
+    response_model=PaginatedShelf,
+    summary="Pobierz moją półkę gier",
+)
 @limiter.limit(READ_LIMIT)
 def get_my_shelf(
     request: Request,
@@ -61,6 +65,7 @@ def get_my_shelf(
     "/me/shelf",
     response_model=ShelfItemResponse,
     status_code=status.HTTP_201_CREATED,
+    summary="Dodaj grę do mojej półki",
 )
 @limiter.limit(WRITE_LIMIT)
 def add_to_my_shelf(
@@ -74,7 +79,11 @@ def add_to_my_shelf(
     return shelf_service.to_response(item)
 
 
-@shelf_router.get("/me/shelf/stats", response_model=ShelfStats)
+@shelf_router.get(
+    "/me/shelf/stats",
+    response_model=ShelfStats,
+    summary="Pobierz statystyki mojej półki",
+)
 @limiter.limit(READ_LIMIT)
 def get_my_shelf_stats(
     request: Request,
@@ -85,7 +94,11 @@ def get_my_shelf_stats(
     return shelf_service.get_shelf_stats(db, current_user.id)
 
 
-@shelf_router.post("/me/shelf/import", response_model=CollectionImportResult)
+@shelf_router.post(
+    "/me/shelf/import",
+    response_model=CollectionImportResult,
+    summary="Importuj moją kolekcję z BGG",
+)
 @limiter.limit(COLLECTION_IMPORT_LIMIT)
 async def import_my_bgg_collection(
     request: Request,
@@ -97,7 +110,11 @@ async def import_my_bgg_collection(
     return await shelf_service.import_bgg_collection(db, current_user.id, payload)
 
 
-@shelf_router.put("/me/shelf/{game_slug}", response_model=ShelfItemResponse)
+@shelf_router.put(
+    "/me/shelf/{game_slug}",
+    response_model=ShelfItemResponse,
+    summary="Edytuj grę na mojej półce",
+)
 @limiter.limit(WRITE_LIMIT)
 def update_my_shelf_item(
     request: Request,
@@ -119,6 +136,7 @@ def update_my_shelf_item(
 @shelf_router.delete(
     "/me/shelf/{game_slug}",
     status_code=status.HTTP_204_NO_CONTENT,
+    summary="Usuń grę z mojej półki",
 )
 @limiter.limit(DELETE_LIMIT)
 def remove_from_my_shelf(
@@ -136,7 +154,11 @@ def remove_from_my_shelf(
     shelf_service.remove_from_shelf(db, current_user.id, game_slug)
 
 
-@shelf_router.get("/users/{tag}/shelf", response_model=PaginatedPublicShelf)
+@shelf_router.get(
+    "/users/{tag}/shelf",
+    response_model=PaginatedPublicShelf,
+    summary="Pobierz publiczną półkę usera",
+)
 @limiter.limit(READ_LIMIT)
 def get_public_user_shelf(
     request: Request,

@@ -248,6 +248,9 @@ class GameListItem(BaseModel):
     bgg_rank: int | None = None
     users_rated: int | None = None
     is_expansion: bool = False
+    miplo_rating: Decimal | None = None
+    miplo_ratings_count: int = 0
+    miplo_reviews_count: int = 0
 
 
 class GameImagePublic(BaseModel):
@@ -293,6 +296,8 @@ class GameDetail(GameListItem):
     images: list[GameImagePublic] = Field(default_factory=list)
     on_my_shelf: bool = False
     my_shelf_item: ShelfItemResponse | None = None
+    my_rating: Decimal | None = None
+    my_review: str | None = None
 
 
 class PaginatedGames(BaseModel):

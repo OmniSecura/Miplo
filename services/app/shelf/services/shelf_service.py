@@ -12,6 +12,7 @@ from services.app.core import bgg_client
 from services.app.core.errors import ApiError, ErrorCode
 from services.app.games.models import Game
 from services.app.games.services import game_service
+from services.app.ratings.constants import MIPLO_MIN_RATINGS_FOR_DISPLAY
 from services.app.shelf.enums import ShelfCondition, ShelfSort
 from services.app.shelf.models import ShelfItem
 from services.app.shelf.schemas import (
@@ -34,6 +35,12 @@ _IMPORT_BATCH_DELAY_SECONDS = 5
 _IMPORT_TIMEOUT_SECONDS = 180
 
 
+def _public_miplo_rating(game: Game):
+    if game.miplo_ratings_count < MIPLO_MIN_RATINGS_FOR_DISPLAY:
+        return None
+    return game.miplo_rating
+
+
 def to_response(item: ShelfItem) -> ShelfItemResponse:
     game = item.game
     return ShelfItemResponse(
@@ -50,7 +57,7 @@ def to_response(item: ShelfItem) -> ShelfItemResponse:
         game_max_players=game.max_players,
         game_playing_time=game.playing_time,
         game_rating=game.rating,
-        game_miplo_rating=None,
+        game_miplo_rating=_public_miplo_rating(game),
         game_model_3d_url=game.model_3d_url,
     )
 
@@ -71,7 +78,7 @@ def to_public_response(item: ShelfItem) -> ShelfPublicItem:
         game_max_players=game.max_players,
         game_playing_time=game.playing_time,
         game_rating=game.rating,
-        game_miplo_rating=None,
+        game_miplo_rating=_public_miplo_rating(game),
         game_model_3d_url=game.model_3d_url,
     )
 
@@ -96,7 +103,12 @@ def _apply_filters(query, *, lendable, search, condition, players):
     if lendable is not None:
         query = query.where(ShelfItem.lendable.is_(lendable))
     if search:
-        query = query.where(func.lower(Game.title).like(f"%{search.strip()[:100].lower()}%"))
+        query = query.where(
+            func.lower(Game.title).contains(
+                search.strip()[:100].lower(),
+                autoescape=True,
+            )
+        )
     if condition is not None:
         query = query.where(ShelfItem.condition == condition.value)
     if players is not None:
@@ -114,7 +126,12 @@ def _apply_sort(query, sort: ShelfSort):
             Game.title.asc(),
         )
     if sort is ShelfSort.MIPLO_RATING:
-        raise ApiError(501, ErrorCode.RATINGS_NOT_AVAILABLE)
+        return query.order_by(
+            (Game.miplo_ratings_count < MIPLO_MIN_RATINGS_FOR_DISPLAY),
+            Game.miplo_rating.is_(None),
+            Game.miplo_rating.desc(),
+            Game.title.asc(),
+        )
     return query.order_by(ShelfItem.added_at.desc(), ShelfItem.id.desc())
 
 
@@ -295,16 +312,15 @@ async def import_bgg_collection(
     user_id: int,
     data: CollectionImportRequest,
 ) -> CollectionImportResult:
-    if data.import_ratings:
-        # Oceny należą do osobnej domeny i nie mogą być pozornie „zaimportowane”.
-        raise ApiError(501, ErrorCode.RATINGS_NOT_AVAILABLE)
-
     imported = skipped = failed = 0
+    ratings_imported = 0
+    ratings_to_import = []
     collection: list[bgg_client.BggCollectionItem] = []
     processed_ids: set[int] = set()
     try:
         async with asyncio.timeout(_IMPORT_TIMEOUT_SECONDS):
             collection = await bgg_client.fetch_collection(data.bgg_username)
+            collection_by_id = {item.bgg_id: item for item in collection}
             unique_ids = list(dict.fromkeys(item.bgg_id for item in collection))
             existing_game_ids = set(
                 db.scalars(
@@ -341,6 +357,13 @@ async def import_bgg_collection(
                     if game is None:
                         failed += 1
                         continue
+                    collection_item = collection_by_id.get(bgg_id)
+                    if (
+                        data.import_ratings
+                        and collection_item is not None
+                        and collection_item.user_rating is not None
+                    ):
+                        ratings_to_import.append((game.id, collection_item.user_rating))
                     if game.id in existing_game_ids:
                         skipped += 1
                         continue
@@ -376,6 +399,15 @@ async def import_bgg_collection(
         raise ApiError(502, ErrorCode.COLLECTION_IMPORT_FAILED)
 
     try:
+        if data.import_ratings and ratings_to_import:
+            from services.app.ratings.services import rating_service
+
+            ratings_imported = rating_service.import_from_bgg(
+                db,
+                user_id,
+                ratings_to_import,
+                commit=False,
+            )
         db.commit()
     except IntegrityError:
         db.rollback()
@@ -385,6 +417,6 @@ async def import_bgg_collection(
         imported=imported,
         skipped=skipped,
         failed=failed,
-        ratings_imported=0,
+        ratings_imported=ratings_imported,
         total_in_bgg=len(collection),
     )

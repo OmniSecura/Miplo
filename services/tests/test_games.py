@@ -563,16 +563,42 @@ class GamesServiceTests(unittest.TestCase):
         self.assertEqual(detail.model_3d_url, "https://storage.example/box_model.glb?v=1")
 
     def test_bgg_202_is_retried_before_xml_is_parsed(self) -> None:
-        client = AsyncMock()
-        client.get.side_effect = [
-            httpx.Response(202, content=b"queued"),
-            httpx.Response(200, content=b"<items />"),
-        ]
+        calls = 0
+
+        def handler(_request: httpx.Request) -> httpx.Response:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return httpx.Response(202, content=b"queued")
+            return httpx.Response(200, content=b"<items />")
+
+        async def run_request():
+            transport = httpx.MockTransport(handler)
+            async with httpx.AsyncClient(transport=transport) as client:
+                return await bgg_client._get_xml(client, "thing", {"id": "1"})
+
         with patch("services.app.core.bgg_client.asyncio.sleep", new=AsyncMock()) as sleep:
-            root = asyncio.run(bgg_client._get_xml(client, "thing", {"id": "1"}))
+            root = asyncio.run(run_request())
         self.assertEqual(root.tag, "items")
-        self.assertEqual(client.get.await_count, 2)
+        self.assertEqual(calls, 2)
         sleep.assert_awaited_once_with(2.0)
+
+    def test_bgg_xml_rejects_entities(self) -> None:
+        malicious = b'<!DOCTYPE x [<!ENTITY boom "payload">]><items>&boom;</items>'
+
+        async def run_request():
+            transport = httpx.MockTransport(
+                lambda _request: httpx.Response(200, content=malicious)
+            )
+            async with httpx.AsyncClient(transport=transport) as client:
+                return await bgg_client._get_xml(client, "thing", {"id": "1"})
+
+        with self.assertRaises(ApiError) as context:
+            asyncio.run(run_request())
+        self.assertEqual(
+            context.exception.detail["error_code"],
+            ErrorCode.BGG_UNAVAILABLE.value,
+        )
 
     def test_bgg_game_xml_parsing(self) -> None:
         xml = ET.fromstring(

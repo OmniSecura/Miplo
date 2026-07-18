@@ -102,7 +102,9 @@ def _optimize_to_webp(data: bytes) -> bytes:
 def _upload_blob(firebase_uid: str, webp_data: bytes) -> str:
     blob = get_bucket().blob(_blob_path(firebase_uid))
     # rok cache'u jest bezpieczny, bo każdy upload zmienia ?v= w URL-u
-    blob.cache_control = "public, max-age=31536000"
+    # Avatar jest danymi osobowymi; po usunięciu konta CDN nie powinien
+    # przechowywać kopii przez rok. Cache busting ?v= nadal działa przy uploadzie.
+    blob.cache_control = "public, max-age=300, must-revalidate"
     blob.upload_from_string(webp_data, content_type="image/webp")
     blob.make_public()
     # milisekundy: dwa uploady w tej samej sekundzie też muszą zmienić URL
