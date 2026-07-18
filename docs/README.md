@@ -19,6 +19,7 @@ przyjęto konkretne rozwiązania.
 | [`CONFIGURATION.md`](CONFIGURATION.md) | zmienne środowiskowe i zachowanie local/dev/prod            |
 | [`ERRORS.md`](ERRORS.md) | stabilny kontrakt `error_code` dla frontendu                |
 | [`SECURITY-AUDIT.md`](SECURITY-AUDIT.md) | wynik audytu bezpieczeństwa z 18.07.2026 |
+| [`operations.md`](operations.md) | harmonogram importu CSV i nightly sync BGG |
 | [`decisions/README.md`](decisions/README.md) | indeks przyjętych decyzji architektonicznych                |
 
 ## Aktualny zakres
@@ -78,5 +79,6 @@ Docelowo produkcyjne migracje powinny zostać przeniesione do Alembic.
 services\.venv\Scripts\python.exe -B -m unittest discover -s services/tests -v
 ```
 
-Aktualny zestaw obejmuje 64 testy (31 `games`, 12 `shelf`, 13 `ratings`,
-8 regresji bezpieczeństwa) bez prawdziwych połączeń z BGG i Firebase.
+Aktualny zestaw obejmuje 76 testów (31 `games`, 12 `shelf`, 13 `ratings`,
+8 regresji bezpieczeństwa i 12 synchronizacji BGG) bez prawdziwych połączeń
+z BGG i Firebase.

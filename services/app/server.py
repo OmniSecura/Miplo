@@ -47,6 +47,10 @@ OPENAPI_TAGS = [
         "description": "Własna i publiczna półka gier oraz import kolekcji BGG.",
     },
     {
+        "name": "administration",
+        "description": "Chronione operacje operatorskie, m.in. import katalogu BGG.",
+    },
+    {
         "name": "moderation",
         "description": "Kolejki oraz decyzje dostępne wyłącznie administratorom.",
     },
@@ -79,7 +83,7 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=settings.allowed_origins_list,
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type", "X-Admin-Key", "X-Import-Key"],
+        allow_headers=["Authorization", "Content-Type", "X-Admin-Key"],
         expose_headers=["Retry-After", "X-RateLimit-Limit", "X-RateLimit-Remaining"],
         allow_credentials=False,
     )

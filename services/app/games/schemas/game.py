@@ -323,10 +323,13 @@ class BarcodeAssign(BaseModel):
 
 
 class CatalogImportResult(BaseModel):
+    mode: str
     total_rows: int
-    created: int
+    inserted: int
     updated: int
     skipped: int
+    errors: int
+    duration_seconds: float
 
 
 class PendingImageModeration(BaseModel):

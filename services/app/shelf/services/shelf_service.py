@@ -31,7 +31,6 @@ from services.app.users.models import User
 logger = logging.getLogger(__name__)
 
 _IMPORT_BATCH_SIZE = 20
-_IMPORT_BATCH_DELAY_SECONDS = 5
 _IMPORT_TIMEOUT_SECONDS = 180
 
 
@@ -347,8 +346,6 @@ async def import_bgg_collection(
                     if exc.detail["error_code"] == ErrorCode.BGG_RATE_LIMITED.value:
                         failed += len(unique_ids) - len(processed_ids)
                         break
-                    if offset + _IMPORT_BATCH_SIZE < len(unique_ids):
-                        await asyncio.sleep(_IMPORT_BATCH_DELAY_SECONDS)
                     continue
 
                 for bgg_id in batch:
@@ -384,8 +381,8 @@ async def import_bgg_collection(
                         existing_game_ids.add(game.id)
                         imported += 1
 
-                if offset + _IMPORT_BATCH_SIZE < len(unique_ids):
-                    await asyncio.sleep(_IMPORT_BATCH_DELAY_SECONDS)
+                # Globalny throttle klienta BGG wymusza odstęp dla wszystkich
+                # źródeł ruchu; lokalny sleep dublowałby opóźnienie.
     except TimeoutError:
         remaining = len({item.bgg_id for item in collection}) - len(processed_ids)
         failed += max(0, remaining)

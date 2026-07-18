@@ -58,7 +58,7 @@ Authorization: Bearer <Firebase ID token>
   jest dostępny.
 - Nie zapisuj Firebase ID tokenu w `localStorage`. Korzystaj z mechanizmu sesji
   Firebase SDK.
-- Nigdy nie umieszczaj we frontendzie `ADMIN_API_KEY`, `GAMES_IMPORT_KEY`, klucza
+- Nigdy nie umieszczaj we frontendzie `ADMIN_API_KEY`, klucza
   Firebase Admin ani tokenu BGG. Konfiguracja Firebase Web jest publiczną
   konfiguracją klienta i nie zastępuje reguł bezpieczeństwa.
 
@@ -273,7 +273,7 @@ bez wykonywania osobnego requestu sprawdzającego.
 Nie używaj w demo:
 
 - żadnego endpointu `/api/admin/moderation/*`;
-- `POST /api/games/import` — to chronione narzędzie operatorskie;
+- `POST /api/admin/games/import` — to chronione narzędzie operatorskie;
 - planowanych, ale jeszcze niezaimplementowanych domen matchmaking i venues;
 - reakcji helpful/not-helpful — nie należą do bieżącego API.
 

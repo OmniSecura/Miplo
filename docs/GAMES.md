@@ -3,7 +3,7 @@
 Moduł `games` łączy trzy źródła danych w jednym katalogu:
 
 1. cache szczegółów pobieranych z BoardGameGeek XML API 2,
-2. masowy, operatorski import rankingu BGG z CSV/JSON,
+2. masowy, operatorski import rankingu BGG z CSV,
 3. gry customowe dodawane przez społeczność.
 
 Półka usera pozostaje osobną domeną opisaną w [`SHELF.md`](SHELF.md). Moduł
@@ -14,17 +14,20 @@ półki w `GameDetail`.
 
 | Plik | Odpowiedzialność |
 |---|---|
-| `core/bgg_client.py` | Jedyny klient BGG: HTTP, Bearer token, XML, timeout i retry HTTP 202 |
+| `core/bgg_client.py` | Jedyny klient BGG: HTTP, globalny throttle, deduplikacja, XML i retry |
 | `games/models/game.py` | `Game`, `GameType`, `GameImage`, `GameBarcode` i relacje |
 | `games/schemas/game.py` | Walidacja formularzy i kontrakty odpowiedzi |
 | `games/services/game_service.py` | Cache BGG, wyszukiwanie, CRUD custom i wszystkie commity |
-| `games/services/catalog_import_service.py` | Batchowy import CSV/JSON |
+| `games/services/catalog_import_service.py` | Atomowy import CSV full/update po 1000 rekordów |
+| `games/services/bgg_sync_service.py` | Trzy priorytety i budżet nightly sync |
 | `games/services/cover_service.py` | Walidacja, WEBP i Firebase Storage dla okładek |
 | `games/services/gallery_service.py` | Prywatny staging i publikacja zdjęć galerii |
 | `games/services/box_generator_service.py` | Walidacja sześciu ścian, GLB 2.0 i Storage |
 | `games/services/moderation_service.py` | Akceptacja, odrzucanie i blokada kontrybucji |
 | `games/routers/router.py` | Endpointy HTTP, bez zapytań SQL |
+| `games/routers/admin_router.py` | Operatorski import chroniony wspólnym auth admina |
 | `games/routers/moderation_router.py` | Endpointy dostępne tylko dla administratora |
+| `scripts/nightly_sync.py` | Punkt wejścia dla Cloud Run Job |
 
 ## BGG: wyszukiwanie i cache
 
@@ -41,17 +44,19 @@ GET /api/games/bgg/224517
 `cached_at = NULL` oznacza rekord utworzony z dumpa rankingowego, bez pobranych
 szczegółów. Dzięki temu kliknięcie gry dociąga opis i okładkę, nawet jeśli sam
 rekord powstał przed chwilą podczas importu. TTL pełnych szczegółów wynosi
-`BGG_CACHE_TTL_SECONDS` (domyślnie 24 h).
+`BGG_CACHE_TTL_SECONDS` (domyślnie 30 dni).
 
-Upsert `/thing` korzysta z jawnego `BGG_UPDATABLE_FIELDS`. Aktualizuje wyłącznie
-dane pochodzące z BGG (`title`, opis, rok, gracze, czas, rating/weight, liczniki,
-ranking, cover i `cached_at`). Nigdy nie dotyka `miplo_rating`, liczników Miplo,
-wymiarów, mediów, barcode ani modelu 3D.
+Upsert `/thing` korzysta z dwóch jawnych whitelist. Pola statyczne (tytuł, opis,
+rok, gracze, czas, waga i okładka) są odświeżane co 30 dni, ale odpowiedź `NULL`
+nie usuwa dobrej wartości lokalnej. `rating`, `bgg_rank` i `users_rated` API
+uzupełnia tylko wtedy, gdy są `NULL`; później aktualizuje je tygodniowy CSV.
+Żadna ścieżka BGG nie dotyka agregatów Miplo, wymiarów, mediów, barcode ani GLB.
 
 `GET /api/games/{slug}` przyjmuje również zwykłą nazwę. FastAPI dekoduje URL,
-a backend normalizuje `Brass Birmingham` do `brass-birmingham`. Publiczny odczyt
-nie uruchamia nietrwałej pracy po odpowiedzi; stary cache odświeża chroniony
-`GET /api/games/bgg/{bgg_id}` albo import katalogu.
+a backend normalizuje `Brass Birmingham` do `brass-birmingham`. Stary cache może
+uruchomić ograniczony best-effort refresh: jedna gra ma cooldown, a instancja
+przyjmuje maksymalnie 32 oczekujące odświeżenia. Gwarantowaną ścieżką operacyjną
+pozostaje codzienny `nightly_sync`.
 
 Brak `BGG_API_TOKEN` nie blokuje startu. Katalog, slug i barcode działają,
 a operacje wymagające BGG zwracają `503 bgg_not_configured`.
@@ -62,6 +67,8 @@ Klient udostępnia także `fetch_games()` dla maksymalnie 20 BGG ID w jednym
 
 XML jest pobierany strumieniowo z limitem 5 MB i parsowany przez `defusedxml`;
 encje/DTD, nadmiar danych, redirecty i nieoficjalne hosty okładek są odrzucane.
+Każda fizyczna próba HTTP, również retry, przechodzi przez semafor oraz minimalny
+odstęp 5 sekund. Równoległe żądania o ten sam `bgg_id` współdzielą jeden request.
 
 ### Warunki korzystania z BGG
 
@@ -73,48 +80,43 @@ linkiem do BGG; backend zwraca te dane atrybucyjne w `GET /health`.
 
 ## Import pełnego rankingu BGG
 
-Endpoint operatorski:
+Endpoint operatorski to `POST /api/admin/games/import`. Wymaga aktywnego Firebase
+admina albo `X-Admin-Key`; osobny `X-Import-Key` został usunięty. Limit wynosi
+`2/day`. Formularz zawiera plik `.csv` oraz enum `mode=update|full` (domyślnie
+`update`, widoczny jako dropdown w Swaggerze).
 
-```http
-POST /api/games/import
-Authorization: Bearer <firebase-id-token>
-X-Import-Key: <GAMES_IMPORT_KEY>
-Content-Type: multipart/form-data
-file: boardgames_ranks.csv
-```
-
-Obsługiwane są `.csv` oraz `.json`. Limit pliku to 32 MB, limit rekordów 250 000,
-a zapis odbywa się batchami po 1000. Import jest idempotentny po `bgg_id`:
-ponowne wysłanie pliku aktualizuje ranking, ocenę i liczbę głosów zamiast tworzyć
-duplikaty.
-
-Minimalny CSV musi mieć kolumny `id,name`. Pełny dump BGG może zawierać:
+Plik ma limit 50 MB i musi mieć content type `text/csv` albo
+`application/vnd.ms-excel`. Wymagane kolumny:
 
 ```text
-id,name,yearpublished,rank,average,usersrated,is_expansion
+id,name,yearpublished,rank,bayesaverage,average,usersrated,is_expansion
 ```
 
-JSON może być tablicą rekordów albo obiektem z polem `items`/`games`:
+Import działa atomowo, jest blokowany per proces i dodatkowo PostgreSQL advisory
+lockiem między instancjami. Upsert jest batchowany po 1000 rekordów.
 
-```json
-[
-  {
-    "id": 224517,
-    "name": "Brass: Birmingham",
-    "yearpublished": 2018,
-    "rank": 1,
-    "average": 8.61,
-    "usersrated": 50000,
-    "is_expansion": false
-  }
-]
-```
+- `update`: istniejące gry aktualizują tylko `rating`, `bgg_rank`, `users_rated`
+  oraz `year_published`; nowe `bgg_id` są dodawane;
+- `full`: dodatkowo aktualizuje `title` oraz `is_expansion`; służy głównie do
+  pierwszego seedu;
+- oba tryby nigdy nie zmieniają slugu, cache szczegółów, pól Miplo, mediów,
+  wymiarów, modelu, barcode ani moderacji.
 
-Plik istnieje tylko jako `UploadFile` podczas requestu. Backend nie zapisuje go
-w repo ani w Firebase. JSON jest ograniczony tym samym limitem 32 MB; CSV jest
-czytany strumieniowo. Nie uruchamiamy automatycznego 20-minutowego enrichmentu
-top 5000 w `BackgroundTasks`: Cloud Run nie gwarantuje dokończenia takiego joba.
-Szczegóły są dociągane leniwie przez `/games/bgg/{bgg_id}`.
+Plik jest parsowany z `UploadFile`, nie trafia do Firebase ani repo. Błędny
+nagłówek zwraca `invalid_csv_format`, przekroczenie limitu `csv_too_large`, a
+równoległy import `import_already_running`.
+
+## Nightly sync
+
+`python -m services.scripts.nightly_sync` uzupełnia dane w kolejności:
+
+1. gry na półkach lub ocenione, które mają `cached_at=NULL`;
+2. stare gry używane przez userów;
+3. najwyżej sklasyfikowane gry bez pobranych szczegółów.
+
+Job pobiera paczki po 20, respektuje globalny throttle i budżet czasu. Błąd jednej
+paczki zwiększa licznik `failed`, ale nie przerywa całego przebiegu. Produkcyjnie
+uruchamia go Cloud Scheduler jako Cloud Run Job codziennie o 03:00.
 
 ## Gry customowe
 
@@ -268,12 +270,13 @@ dostępne wyłącznie w kolejce administratora.
 ```env
 BGG_API_BASE=https://boardgamegeek.com/xmlapi2
 BGG_API_TOKEN=
-BGG_CACHE_TTL_SECONDS=86400
-GAMES_IMPORT_KEY=<losowy-sekret-minimum-32-bajty>
-ADMIN_API_KEY=<inny-losowy-sekret-minimum-32-bajty>
+BGG_CACHE_TTL_SECONDS=2592000
+BGG_MAX_CONCURRENT=2
+BGG_MIN_REQUEST_INTERVAL=5.0
+ADMIN_API_KEY=<losowy-sekret-minimum-32-bajty>
 ```
 
-Token BGG i oba klucze operatorskie trafiają wyłącznie do `.env`/Secret Managera.
+Token BGG i klucz operatorski trafiają wyłącznie do `.env`/Secret Managera.
 
 ## Lokalna baza i migracje
 
@@ -291,10 +294,11 @@ przez `0007_ratings.sql`.
 ## Testy
 
 ```powershell
-services\.venv\Scripts\python.exe -B -m unittest services.tests.test_games -v
+services\.venv\Scripts\python.exe -B -m unittest services.tests.test_games services.tests.test_sync_bgg -v
 ```
 
-Testy nie łączą się z BGG ani Firebase. Aktualne 30 przypadków pokrywa import
+Testy nie łączą się z BGG ani Firebase. Przypadki pokrywają import
 idempotentny, filtrowanie, ownership, prywatną galerię, rolę admina, blokadę
 kontrybucji, moderację modelu, barcode per język i jego atomową podmianę,
-strukturę binarną GLB, retry BGG oraz walidację obrazów.
+strukturę binarną GLB, throttle 50 requestów, deduplikację, nightly sync,
+whitelisty CSV, retry BGG oraz walidację obrazów.

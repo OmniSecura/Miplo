@@ -10,7 +10,7 @@ Aktualny katalog endpointów. Prefix API: `/api`. Interaktywny kontrakt OpenAPI:
 - `401` oznacza brak/niepoprawny token, `403` brak uprawnień, `429` limit.
 - `READ_LIMIT`: 60/min, `WRITE_LIMIT`: 20/min, `DELETE_LIMIT`: 5/h,
   upload avatara: 5/min, customowa gra: 5/h, galeria: 10/h, model 3D: 3/h,
-  import katalogu: 1/h, import kolekcji BGG: 2/h, oceny: 20/h,
+  import katalogu: 2/day, import kolekcji BGG: 2/h, oceny: 20/h,
   zgłoszenia recenzji: 10/h.
 - Wewnętrzne `users.id` i `firebase_uid` nigdy nie są zwracane.
 
@@ -221,7 +221,8 @@ Publiczny katalog zawsze zwraca wyłącznie zweryfikowane gry.
 ### `GET /api/games/bgg/{bgg_id}`
 
 Auth: tak. Pobiera lub odświeża pełne szczegóły z BGG i zapisuje cache. Bez tokenu
-BGG zwraca `503 bgg_not_configured`. Dedykowany limit `30/hour` chroni token BGG.
+BGG zwraca `503 bgg_not_configured`. Dedykowany limit `30/hour`, globalny odstęp
+5 sekund i deduplikacja równoległych BGG ID chronią token.
 
 ### `GET /api/games/by-barcode/{barcode}`
 
@@ -234,8 +235,8 @@ zweryfikowane gry; oczekująca propozycja nigdy nie wpływa na wynik skanowania.
 Auth: opcjonalny. Pełny widok gry. Bez tokenu działa publicznie; z poprawnym
 tokenem dodaje `on_my_shelf` i `my_shelf_item`. Błędny token daje `401`, nie jest
 ignorowany. Dodaje też `my_rating` i `my_review`. Parametr może być slugiem lub zwykłą nazwą, np.
-`Brass Birmingham` jest normalizowane do `brass-birmingham`. Endpoint jest
-cache-only; odświeżenie wykonuje chroniony `/games/bgg/{bgg_id}`.
+`Brass Birmingham` jest normalizowane do `brass-birmingham`. Stary rekord może
+zaplanować ograniczony best-effort refresh; odpowiedź zawsze pochodzi z cache.
 
 ### `POST /api/games/{slug}/barcodes`
 
@@ -403,18 +404,22 @@ Recenzje:
 
 ## Games — import operatorski
 
-### `POST /api/games/import`
+### `POST /api/admin/games/import`
 
-Auth: tak oraz wymagany `X-Import-Key`. Limit 1/h. `multipart/form-data`, pole
-`file` z rozszerzeniem `.csv` lub `.json`, maksymalnie 32 MB. Batchowy upsert po
-`bgg_id`; odpowiedź:
+Auth: Firebase admin albo `X-Admin-Key`. Limit `2/day`. `multipart/form-data`:
+
+- `file`: oficjalny `.csv`, maksymalnie 50 MB;
+- `mode`: dropdown `update` (domyślny) albo `full`.
+
+Batchowy, atomowy upsert po `bgg_id`; odpowiedź:
 
 ```json
-{"total_rows":150000,"created":149000,"updated":500,"skipped":500}
+{"mode":"update","total_rows":150000,"inserted":300,"updated":149650,"skipped":50,"errors":0,"duration_seconds":94.2}
 ```
 
-Endpoint nie przyjmuje zwykłego klucza usera jako wystarczającej autoryzacji.
-Sekret operatorski pochodzi z `GAMES_IMPORT_KEY` w Secret Managerze/.env.
+`update` zmienia wyłącznie ranking, ocenę BGG, liczbę głosów i rok. `full`
+dodatkowo tytuł oraz flagę dodatku. Żaden tryb nie zmienia danych Miplo, slugu,
+mediów, cache szczegółów, barcode ani modelu 3D.
 
 ## Celowo nieobecne
 

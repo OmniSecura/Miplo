@@ -2,6 +2,8 @@
 
 Status: przyjęte
 
+> Ręczny odstęp importu zastąpił globalny throttle każdego requestu w ADR 0016.
+
 Uzupełnienie 2026-07-18: etap przejściowy z punktu 7 zakończył ADR 0014.
 `import_ratings=true` i sortowanie Miplo są obecnie zaimplementowane; zachowany
 opis dokumentuje zachowanie sprzed wdrożenia domeny ratings.

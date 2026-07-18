@@ -45,13 +45,17 @@ FastAPI / Cloud Run
 ## Games i BoardGameGeek
 
 `core/bgg_client.py` jest jedynym klientem BoardGameGeek XML API 2. Wymusza
-Bearer token, limit odpowiedzi, timeout 10 s i retry odpowiedzi HTTP 202.
+Bearer token, limit odpowiedzi, timeout 10 s, retry HTTP 202, semafor, odstęp
+między requestami i deduplikację pobrania tego samego BGG ID.
 
-Pełne rekordy BGG są cache'owane w PostgreSQL przez 24 godziny. Search najpierw
+Pełne rekordy BGG są cache'owane w PostgreSQL przez 30 dni. Search najpierw
 sprawdza bazę, a przy braku wyniku pyta BGG. Sama lista wyników z BGG nie jest
 zapisywana; upsert następuje po wybraniu konkretnej gry. Oficjalny dump rankingów
-można załadować operatorskim endpointem CSV/JSON. Rekord z dumpa ma
+można załadować operatorskim endpointem CSV w trybie `update` lub `full`. Rekord z dumpa ma
 `cached_at=NULL`, co oznacza „podstawowy wpis bez pobranych szczegółów”.
+
+Tygodniowy CSV aktualizuje ranking, ocenę BGG i liczbę głosów. Codzienny Cloud Run
+Job wzbogaca szczegóły, priorytetowo dla gier używanych przez userów.
 
 Redis nie uczestniczy obecnie w cache katalogu. Można go dodać później jako
 krótkotrwały cache odpowiedzi, ale źródłem prawdy pozostaje PostgreSQL.
@@ -68,8 +72,8 @@ slug gry, natomiast relacje SQL korzystają z niezmiennego wewnętrznego FK
 `game_id`. Usunięcie gry z półki nie usuwa oceny.
 
 Agregaty są denormalizowane w `games`, przeliczane przez rating service i widoczne
-od trzech ocen. BGG aktualizuje tylko `BGG_UPDATABLE_FIELDS`, więc lazy fetch nie
-może dotknąć wyniku Miplo. Twarde usunięcie konta przelicza gry, których oceny
+od trzech ocen. BGG używa rozdzielonych whitelist API/CSV, z których żadna nie
+zawiera pól Miplo. Twarde usunięcie konta przelicza gry, których oceny
 zostały usunięte kaskadowo.
 
 Wymagana atrybucja BGG jest zwracana przez `/health`; frontend powinien pokazać

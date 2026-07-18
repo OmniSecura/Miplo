@@ -11,7 +11,10 @@ ważności high/critical w kodzie objętym audytem.
 - Firebase: revocation/disabled check, stabilne 401/503 i bezpieczne usuwanie konta;
 - abuse/DoS: globalny limit przed auth, per-endpoint limity, Redis wymagany na prod;
 - HTTP: jawny CORS i Host allowlist, HSTS na prod, `nosniff`, `DENY`, `no-store`;
-- BGG: `defusedxml`, stream limit 5 MB, brak redirectów i logowania query params;
+- BGG: `defusedxml`, stream limit 5 MB, przypięty oficjalny host, brak redirectów,
+  globalny throttle per proces, deduplikacja in-flight i bounded refresh queue;
+- CSV BGG: admin-only, 50 MB, ścisły nagłówek/content-type, whitelisty pól,
+  atomowa transakcja i PostgreSQL advisory lock;
 - upload: limity body/chunk/pikseli, dekodowanie i re-encoding, prywatny staging;
 - GLB: jeden domyślny slot CPU, aktywny request, odzyskanie osieroconego joba;
 - SQL: zapytania parametryzowane; LIKE ma escape wildcardów;
@@ -22,7 +25,7 @@ ważności high/critical w kodzie objętym audytem.
 
 ## Weryfikacja
 
-- `unittest`: 64/64 testy OK;
+- `unittest`: 76/76 testów OK;
 - `compileall`: OK;
 - `pip check`: brak uszkodzonych zależności;
 - `pip-audit`: brak znanych CVE w `services/requirements.txt`;
@@ -43,3 +46,4 @@ Firebase, Redis i BGG. Przed produkcją trzeba dodatkowo:
 4. ustawić timeout Cloud Run większy niż typowy czas GLB;
 5. przy większym ruchu przenieść GLB do trwałej kolejki z retry/idempotency;
 6. wykonywać `pip-audit`, Bandit i testy w CI przy każdym merge'u.
+7. do czasu distributed throttle ograniczyć liczbę instancji wykonujących ruch BGG.

@@ -74,7 +74,7 @@ malejąco po liczbie nierozwiązanych zgłoszeń. W publicznych ścieżkach
 
 ## BGG i półka
 
-Odświeżenie BGG iteruje po `BGG_UPDATABLE_FIELDS`; lista nie zawiera żadnego
+Odświeżenie BGG i tygodniowy CSV mają osobne jawne whitelisty; żadna nie zawiera
 pola Miplo ani mediów/customizacji. `POST /api/me/shelf/import` z
 `import_ratings=true` przenosi dostępne oceny BGG, zaokrąglając je do najbliższego
 kroku 0.5 i oznaczając `source=bgg_import`. Istniejącej oceny usera nigdy nie

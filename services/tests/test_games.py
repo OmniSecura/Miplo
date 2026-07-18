@@ -15,7 +15,6 @@ os.environ["ENV"] = "local"
 os.environ["SQLITE_PATH"] = os.path.join(tempfile.gettempdir(), "miplo-games-tests.db")
 os.environ.setdefault("FIREBASE_ADMIN_CREDENTIALS", "unused-in-unit-tests.json")
 os.environ.setdefault("FIREBASE_STORAGE_BUCKET", "unused-in-unit-tests")
-os.environ["GAMES_IMPORT_KEY"] = "unit-test-import-key-long-enough"
 os.environ["ADMIN_API_KEY"] = "unit-test-admin-key-long-enough-123"
 
 from fastapi import UploadFile
@@ -27,10 +26,11 @@ from starlette.requests import Request
 
 from services.app.core import bgg_client
 from services.app.core.auth import get_admin_access, get_current_admin
+from services.app.core.config import settings
 from services.app.core.database import Base, SessionLocal, engine
 from services.app.core.errors import ApiError, ErrorCode
 from services.app.games.models import Game, GameBarcode, GameImage
-from services.app.games.enums import GameLanguage
+from services.app.games.enums import CatalogImportMode, GameLanguage
 from services.app.games.routers.router import submit_3d_model
 from services.app.games.schemas import BarcodeAssign, GalleryImageCreate, GameCreate, GameUpdate
 from services.app.games.services import (
@@ -187,22 +187,23 @@ class GamesServiceTests(unittest.TestCase):
 
     def test_admin_api_key_uses_constant_secret_and_never_falls_back(self) -> None:
         request = Request({"type": "http", "method": "GET", "path": "/", "headers": []})
-        result = get_admin_access(
-            request,
-            api_key="unit-test-admin-key-long-enough-123",
-            bearer=None,
-            db=self.db,
-        )
-        self.assertIsNone(result)
-        self.assertEqual(request.state.firebase_uid, "admin-api-key")
-
-        with self.assertRaises(ApiError) as context:
-            get_admin_access(
+        with patch.object(settings, "ADMIN_API_KEY", "unit-test-admin-key-long-enough-123"):
+            result = get_admin_access(
                 request,
-                api_key="wrong-key-that-is-still-long-enough-123",
+                api_key="unit-test-admin-key-long-enough-123",
                 bearer=None,
                 db=self.db,
             )
+            self.assertIsNone(result)
+            self.assertEqual(request.state.firebase_uid, "admin-api-key")
+
+            with self.assertRaises(ApiError) as context:
+                get_admin_access(
+                    request,
+                    api_key="wrong-key-that-is-still-long-enough-123",
+                    bearer=None,
+                    db=self.db,
+                )
         self.assertEqual(
             context.exception.detail["error_code"],
             ErrorCode.INVALID_ADMIN_API_KEY.value,
@@ -211,17 +212,25 @@ class GamesServiceTests(unittest.TestCase):
 
     def test_catalog_csv_import_is_idempotent_and_excludes_expansions(self) -> None:
         csv_data = (
-            "id,name,yearpublished,rank,average,usersrated,is_expansion\n"
-            "224517,Brass Birmingham,2018,1,8.61,50000,0\n"
-            "999999,Brass Expansion,2020,100,7.00,200,1\n"
+            "id,name,yearpublished,rank,bayesaverage,average,usersrated,is_expansion\n"
+            "224517,Brass Birmingham,2018,1,8.40,8.61,50000,0\n"
+            "999999,Brass Expansion,2020,100,6.90,7.00,200,1\n"
         ).encode()
-        upload = UploadFile(file=io.BytesIO(csv_data), filename="bgg.csv")
-        first = catalog_import_service.import_catalog(self.db, upload)
-        self.assertEqual((first.created, first.updated, first.skipped), (2, 0, 0))
+        upload = UploadFile(
+            file=io.BytesIO(csv_data),
+            filename="bgg.csv",
+            headers={"content-type": "text/csv"},
+        )
+        first = catalog_import_service.import_catalog(self.db, upload, CatalogImportMode.FULL)
+        self.assertEqual((first.inserted, first.updated, first.skipped), (2, 0, 0))
 
-        upload_again = UploadFile(file=io.BytesIO(csv_data), filename="bgg.csv")
+        upload_again = UploadFile(
+            file=io.BytesIO(csv_data),
+            filename="bgg.csv",
+            headers={"content-type": "text/csv"},
+        )
         second = catalog_import_service.import_catalog(self.db, upload_again)
-        self.assertEqual((second.created, second.updated), (0, 2))
+        self.assertEqual((second.inserted, second.updated), (0, 2))
         self.assertEqual(self.db.query(Game).count(), 2)
 
         catalog = game_service.list_games(self.db, page=1, size=20)
@@ -577,7 +586,11 @@ class GamesServiceTests(unittest.TestCase):
             async with httpx.AsyncClient(transport=transport) as client:
                 return await bgg_client._get_xml(client, "thing", {"id": "1"})
 
-        with patch("services.app.core.bgg_client.asyncio.sleep", new=AsyncMock()) as sleep:
+        bgg_client._reset_runtime_state_for_tests()
+        with (
+            patch.object(settings, "BGG_MIN_REQUEST_INTERVAL", 0),
+            patch("services.app.core.bgg_client.asyncio.sleep", new=AsyncMock()) as sleep,
+        ):
             root = asyncio.run(run_request())
         self.assertEqual(root.tag, "items")
         self.assertEqual(calls, 2)

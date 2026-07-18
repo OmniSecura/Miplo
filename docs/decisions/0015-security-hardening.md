@@ -2,6 +2,9 @@
 
 Status: przyjęte — 2026-07-18
 
+> ADR 0016 dopuszcza ograniczony best-effort refresh po publicznym GET. Praca
+> gwarantowana nadal nie korzysta z `BackgroundTasks`, lecz z Cloud Run Job.
+
 ## Kontekst
 
 Audyt wykazał, że poprawnie podpisany, ale odwołany token Firebase mógł działać
