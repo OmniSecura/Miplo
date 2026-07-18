@@ -38,6 +38,7 @@ CATALOG_IMPORT_LIMIT = "1/hour"  # ciężki, operatorski import CSV/JSON
 GALLERY_UPLOAD_LIMIT = "10/hour"  # zdjęcia wnętrza customowej gry
 MODEL_UPLOAD_LIMIT = "3/hour"     # sześć tekstur + generowanie GLB
 MODERATION_LIMIT = "60/minute"    # chronione operacje administratora
+COLLECTION_IMPORT_LIMIT = "2/hour"  # BGG collection: kosztowne requesty batch
 
 
 def _key_func(request: Request) -> str:

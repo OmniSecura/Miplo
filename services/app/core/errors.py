@@ -58,6 +58,13 @@ class ErrorCode(str, Enum):
     IMPORT_NOT_CONFIGURED = "import_not_configured"
     INVALID_IMPORT_KEY = "invalid_import_key"
 
+    # ── Shelf ─────────────────────────────────────────────────────────
+    GAME_ALREADY_ON_SHELF = "game_already_on_shelf"
+    GAME_NOT_ON_SHELF = "game_not_on_shelf"
+    COLLECTION_IMPORT_TIMEOUT = "collection_import_timeout"
+    INVALID_CONDITION = "invalid_condition"
+    RATINGS_NOT_AVAILABLE = "ratings_not_available"
+
     # ── Pliki / upload ────────────────────────────────────────────────
     FILE_TOO_LARGE = "file_too_large"
     INVALID_FILE_TYPE = "invalid_file_type"

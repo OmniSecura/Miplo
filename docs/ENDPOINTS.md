@@ -10,11 +10,11 @@ Aktualny katalog endpointów. Prefix API: `/api`. Interaktywny kontrakt OpenAPI:
 - `401` oznacza brak/niepoprawny token, `403` brak uprawnień, `429` limit.
 - `READ_LIMIT`: 60/min, `WRITE_LIMIT`: 20/min, `DELETE_LIMIT`: 5/h,
   upload avatara: 5/min, customowa gra: 5/h, galeria: 10/h, model 3D: 3/h,
-  import katalogu: 1/h.
+  import katalogu: 1/h, import kolekcji BGG: 2/h.
 - Wewnętrzne `users.id` i `firebase_uid` nigdy nie są zwracane.
 
 Swagger dzieli operacje wyłącznie tagami: `users`, `games`, `BGG games`,
-`custom games`, `game gallery`, `3D models`, `moderation` i `system`. To nadal
+`custom games`, `game gallery`, `3D models`, `shelf`, `moderation` i `system`. To nadal
 jeden serwis, jeden prefix i jeden dokument OpenAPI.
 
 ## System
@@ -80,6 +80,65 @@ zgodnie z RODO/Apple. Odpowiedź `204`.
 Auth: tak. Zwraca publiczny profil po technicznym tagu `[a-z0-9_]{3,30}`.
 Nieaktywne lub nieistniejące konto daje `404 user_not_found`.
 
+## Shelf — półka usera
+
+### `GET /api/me/shelf`
+
+Auth: tak. Zwraca `{items,total,page,size,pages}` dla aktualnego usera. Parametry:
+
+- `page >= 1`, `size` od 1 do 100;
+- `lendable` — filtr wypożyczalności;
+- `search` — 2–100 znaków, częściowy tytuł gry;
+- `condition` — dropdown `new | good | used | damaged`;
+- `players` — od 1 do 50;
+- `sort` — dropdown `added_at | title | game_rating | miplo_rating`.
+
+`sort=miplo_rating` zwraca na razie `501 ratings_not_available`. Widok własny
+zawiera prywatne pole `notes`.
+
+### `POST /api/me/shelf`
+
+Auth: tak. Dodaje zweryfikowaną grę do półki aktualnego usera. JSON zawiera
+`game_slug` oraz opcjonalnie `lendable`, `lending_deposit`, `lending_notes`,
+`condition`, `notes`. Kaucja: `0.00–9999.00`, notatki: maks. 500 znaków.
+Odpowiedź `201`. Duplikat daje `409 game_already_on_shelf`, a brak publicznej gry
+`404 game_not_found`.
+
+### `PUT /api/me/shelf/{game_slug}`
+
+Auth: tak. Częściowo aktualizuje dane własnego egzemplarza; pominięte pola
+pozostają bez zmian. `game_slug` identyfikuje grę, a właściciel zawsze pochodzi z
+tokenu. Odpowiedź `200`, brak pozycji: `404 game_not_on_shelf`.
+
+### `DELETE /api/me/shelf/{game_slug}`
+
+Auth: tak. Usuwa wyłącznie wpis aktualnego usera. Nie usuwa gry z katalogu ani
+przyszłej oceny usera. Odpowiedź `204`.
+
+### `GET /api/me/shelf/stats`
+
+Auth: tak. Zwraca `total_games`, `lendable_games` oraz `total_playing_time` jako
+sumę katalogowych czasów rozgrywek w minutach.
+
+### `POST /api/me/shelf/import`
+
+Auth: tak. Limit `2/hour`. Body:
+
+```json
+{"bgg_username":"BoardGamer_1","import_ratings":false}
+```
+
+Importuje posiadane gry addytywnie, paczkami po 20 BGG ID, z limitem 180 sekund.
+Odpowiedź zawiera `imported`, `skipped`, `failed`, `ratings_imported` i
+`total_in_bgg`. Timeout zwraca wynik częściowy. `import_ratings=true` daje obecnie
+`501 ratings_not_available`, dopóki nie powstanie moduł ratings.
+
+### `GET /api/users/{tag}/shelf`
+
+Auth: tak. Zwraca półkę aktywnego usera po publicznym tagu, z paginacją i filtrem
+`lendable`. Nie zawiera prywatnego `notes`. Kaucja i warunki są zwracane tylko dla
+pozycji z `lendable=true`. Niezweryfikowane gry są ukryte.
+
 ## Games — publiczny katalog i BGG
 
 ### `GET /api/games/search?q={tekst}`
@@ -117,7 +176,9 @@ zweryfikowane gry; oczekująca propozycja nigdy nie wpływa na wynik skanowania.
 
 ### `GET /api/games/{slug}`
 
-Auth: nie. Pełny widok gry. Parametr może być slugiem lub zwykłą nazwą, np.
+Auth: opcjonalny. Pełny widok gry. Bez tokenu działa publicznie; z poprawnym
+tokenem dodaje `on_my_shelf` i `my_shelf_item`. Błędny token daje `401`, nie jest
+ignorowany. Parametr może być slugiem lub zwykłą nazwą, np.
 `Brass Birmingham` jest normalizowane do `brass-birmingham`. Stary cache BGG jest
 zwracany od razu i odświeżany best-effort w tle.
 
@@ -291,5 +352,5 @@ Sekret operatorski pochodzi z `GAMES_IMPORT_KEY` w Secret Managerze/.env.
 
 ## Celowo nieobecne
 
-- `POST /api/me/collection/import` — usunięty zgodnie z decyzją produktową;
-  wróci dopiero razem z właściwym modułem shelf/jobem importu.
+- endpointy `ratings`, matchmakingu i venues — to kolejne domeny;
+- import ocen z BGG: `import_ratings=true` jest jawnie odrzucane do czasu ratings.

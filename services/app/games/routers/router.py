@@ -20,7 +20,7 @@ from fastapi import (
 )
 from sqlalchemy.orm import Session
 
-from services.app.core.auth import get_current_user
+from services.app.core.auth import get_current_user, get_current_user_optional
 from services.app.core.config import settings
 from services.app.core.database import get_db
 from services.app.core.errors import ApiError, ErrorCode
@@ -53,6 +53,7 @@ from services.app.games.services import (
     game_service,
 )
 from services.app.users.models import User
+from services.app.shelf.services import shelf_service
 
 games_router = APIRouter()
 
@@ -365,6 +366,7 @@ def get_game_detail(
     response: Response,
     background_tasks: BackgroundTasks,
     slug: str = Path(min_length=1, max_length=200),
+    current_user: User | None = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ) -> GameDetail:
     # "Brass Birmingham" i "brass-birmingham" trafiają w ten sam slug.
@@ -375,4 +377,9 @@ def get_game_detail(
         raise ApiError.not_found(ErrorCode.GAME_NOT_FOUND)
     if game_service.is_stale(game):
         background_tasks.add_task(game_service.refresh_game_by_id, game.id)
-    return game_service.to_detail(game)
+    shelf_item = (
+        shelf_service.is_on_shelf(db, current_user.id, game.id)
+        if current_user is not None
+        else None
+    )
+    return game_service.to_detail(game, shelf_item)

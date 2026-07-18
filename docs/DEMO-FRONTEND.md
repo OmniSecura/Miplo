@@ -18,8 +18,8 @@ sekretów operatorskich.
 
 ## 1. Produkt i charakter interfejsu
 
-Miplo jest aplikacją do odkrywania gier planszowych, oglądania szczegółów pudełka,
-tworzenia społecznościowych wpisów oraz proponowania zdjęć, kodów kreskowych i
+Miplo jest aplikacją do odkrywania gier planszowych, prowadzenia własnej półki,
+udostępniania gier do wypożyczenia oraz proponowania zdjęć, kodów kreskowych i
 teksturyzowanych modeli 3D pudełek.
 
 Interfejs powinien być:
@@ -125,7 +125,35 @@ Authorization: Bearer <Firebase ID token>
    - sekcja konta: dezaktywacja, ponowna aktywacja i trwałe usunięcie;
    - trwałe usunięcie wymaga wyraźnego potwierdzenia, np. wpisania `USUŃ`.
 
-9. Dodawanie gry custom `/games/new`
+9. Moja półka `/me/shelf`
+   - lista lub grid posiadanych gier z paginacją;
+   - filtry: wypożyczalność, tytuł, stan egzemplarza i liczba graczy;
+   - sortowanie: ostatnio dodane, tytuł, rating BGG;
+   - karta pokazuje okładkę, tytuł, stan i czy gra jest dostępna do wypożyczenia;
+   - edycja „Mojej kopii”: `lendable`, kaucja, publiczne warunki, stan i prywatna
+     notatka;
+   - osobne potwierdzenie usunięcia gry z półki;
+   - kafle statystyk z `total_games`, `lendable_games`, `total_playing_time`;
+   - pusty stan prowadzi do katalogu albo importu kolekcji BGG.
+
+10. Import kolekcji BGG
+    - formularz z nickiem BGG i informacją, że operacja może potrwać do 3 minut;
+    - podczas requestu pokaż nieblokujący progress/spinner i nie wysyłaj drugi raz;
+    - po sukcesie pokaż liczniki `imported`, `skipped`, `failed`, `total_in_bgg`;
+    - nie oferuj jeszcze importu ocen (`import_ratings` wysyłaj jako `false`);
+    - import tylko dodaje gry i nigdy nie usuwa istniejących pozycji.
+
+11. Publiczna półka na profilu `/u/:tag/shelf`
+    - wymaga zalogowania;
+    - filtr „tylko do wypożyczenia”;
+    - pokazuje stan egzemplarza, a kaucję i warunki tylko dla `lendable=true`;
+    - nigdy nie oczekuje pola prywatnej notatki `notes`.
+
+Na stronie szczegółów gry użyj `on_my_shelf` i `my_shelf_item`. Jeśli gra nie jest
+na półce, pokaż „Dodaj na półkę”. Jeśli jest, pokaż sekcję „Moja kopia” z edycją
+bez wykonywania osobnego requestu sprawdzającego.
+
+12. Dodawanie gry custom `/games/new`
    - formularz multipart: tytuł, opis, gracze, czas, rok, typy, wymiary,
      bezpieczny link HTTPS do instrukcji i opcjonalna okładka;
    - `game_types` wysyłaj jako JSON string, np. `["Euro","Ekonomiczna"]`;
@@ -135,27 +163,27 @@ Authorization: Bearer <Firebase ID token>
      nie można pobrać listy oczekujących gier użytkownika. Nie symuluj tej funkcji
      jako działającej z prawdziwym API.
 
-10. Edycja własnej gry custom
+13. Edycja własnej gry custom
     - używa `PUT /api/games/{slug}` jako multipart;
     - dostępna tylko właścicielowi customowej gry;
     - zmiana ponownie kieruje grę do moderacji i może czasowo ukryć ją w katalogu;
     - nowy slug zawsze bierz z odpowiedzi po zapisie.
 
-11. Galeria społecznościowa
+14. Galeria społecznościowa
     - upload jednego JPEG/PNG/WEBP do 2 MB i opcjonalny podpis;
     - po `202` pokaż status „oczekuje na akceptację”;
     - nie dodawaj zdjęcia do publicznej galerii przed akceptacją;
     - odpowiedź zwraca `public_id`, który można wykorzystać do wycofania własnej
       propozycji.
 
-12. Propozycja barcode
+15. Propozycja barcode
     - formularz ma pole barcode i dropdown języka;
     - dozwolone języki: `pl` — Polski, `en` — Angielski;
     - wysyłaj `application/x-www-form-urlencoded`, nie JSON;
     - backend sprawdza format i sumę kontrolną EAN-8, UPC-A lub EAN-13;
     - propozycja ma status `pending` i staje się publiczna dopiero po moderacji.
 
-13. Generator modelu pudełka 3D
+16. Generator modelu pudełka 3D
     - jeden formularz z sześcioma wymaganymi zdjęciami: `front`, `back`, `left`,
       `right`, `top`, `bottom`;
     - pokaż graficzną instrukcję znaczenia każdej ścianki;
@@ -184,7 +212,7 @@ Authorization: Bearer <Firebase ID token>
 | POST | `/api/me/deactivate` | tak | odwracalna dezaktywacja |
 | POST | `/api/me/activate` | tak | reaktywacja konta |
 | DELETE | `/api/me` | tak | trwałe usunięcie konta |
-| GET | `/api/users/{tag}` | nie | profil publiczny |
+| GET | `/api/users/{tag}` | tak | profil publiczny aktywnego gracza |
 
 ### Gry
 
@@ -192,7 +220,7 @@ Authorization: Bearer <Firebase ID token>
 |---|---|---:|---|
 | GET | `/api/games/search?q={query}` | nie | lokalne wyniki lub proxy BGG |
 | GET | `/api/games` | nie | zweryfikowany katalog i filtry |
-| GET | `/api/games/{slug}` | nie | szczegóły zweryfikowanej gry |
+| GET | `/api/games/{slug}` | opcjonalny | szczegóły gry i kontekst własnej półki |
 | GET | `/api/games/bgg/{bgg_id}` | tak | pobranie pełnych danych BGG do cache |
 | GET | `/api/games/by-barcode/{barcode}` | nie | lookup zeskanowanego kodu |
 | POST | `/api/games` | tak | utworzenie gry custom, multipart |
@@ -204,12 +232,24 @@ Authorization: Bearer <Firebase ID token>
 | POST | `/api/games/{slug}/3d-model` | tak | propozycja teksturowanego GLB |
 | DELETE | `/api/games/{slug}/3d-model` | tak | wycofanie propozycji modelu |
 
+### Półka
+
+| Metoda | Endpoint | Auth | Zastosowanie |
+|---|---|---:|---|
+| GET | `/api/me/shelf` | tak | moja półka, filtry i paginacja |
+| POST | `/api/me/shelf` | tak | dodanie gry do półki |
+| PUT | `/api/me/shelf/{game_slug}` | tak | edycja danych mojego egzemplarza |
+| DELETE | `/api/me/shelf/{game_slug}` | tak | usunięcie wpisu z półki |
+| GET | `/api/me/shelf/stats` | tak | statystyki półki |
+| POST | `/api/me/shelf/import` | tak | addytywny import kolekcji BGG |
+| GET | `/api/users/{tag}/shelf` | tak | publiczny widok półki innego usera |
+
 Nie używaj w demo:
 
 - żadnego endpointu `/api/admin/moderation/*`;
 - `POST /api/games/import` — to chronione narzędzie operatorskie;
-- nieistniejącego `/api/me/collection/import`;
-- planowanych, ale jeszcze niezaimplementowanych domen shelf, matchmaking i venues.
+- planowanych, ale jeszcze niezaimplementowanych domen ratings, matchmaking i venues;
+- `import_ratings=true` ani sortowania `miplo_rating` do czasu modułu ratings.
 
 ## 5. Najważniejsze modele odpowiedzi
 
@@ -285,6 +325,24 @@ zalogowany klient wywołuje `/api/games/bgg/{bgg_id}` i pobiera slug z odpowiedz
       "created_at": "2026-07-18T12:00:00Z"
     }
   ],
+  "on_my_shelf": true,
+  "my_shelf_item": {
+    "lendable": true,
+    "lending_deposit": "50.00",
+    "lending_notes": "Odbiór osobisty",
+    "condition": "good",
+    "notes": "Prywatna notatka",
+    "added_at": "2026-07-18T12:00:00Z",
+    "game_slug": "brass-birmingham",
+    "game_title": "Brass: Birmingham",
+    "game_cover_url": "https://cf.geekdo-images.com/...",
+    "game_min_players": 2,
+    "game_max_players": 4,
+    "game_playing_time": 120,
+    "game_rating": "8.56",
+    "game_miplo_rating": null,
+    "game_model_3d_url": null
+  },
   "created_at": "2026-07-18T12:00:00Z",
   "community_contributions_enabled": true
 }
@@ -324,6 +382,7 @@ wyjątków ani technicznego `details`. Obsłuż co najmniej:
 - `unauthorized`, `invalid_token`, `token_expired`;
 - `user_inactive`, `forbidden`, `not_game_owner`;
 - `game_not_found`, `barcode_not_found`, `game_title_exists`;
+- `game_already_on_shelf`, `game_not_on_shelf`, `ratings_not_available`;
 - `invalid_barcode_format`, `game_barcode_exists`, `barcode_proposal_pending`;
 - `contributions_locked`, `model_already_processing`, `gallery_limit_reached`;
 - `file_too_large`, `invalid_file_type`, `payload_too_large`;
@@ -359,6 +418,8 @@ Mock adapter powinien mieć ten sam interfejs co prawdziwy klient API i realisty
 opóźnienie 250–700 ms. Przygotuj:
 
 - minimum 12 gier, kilka o podobnej nazwie, BGG i custom;
+- półkę własną z co najmniej 8 pozycjami, publiczną półkę bez prywatnych notatek
+  oraz wariant pustej półki;
 - grę z pełnym GLB, grę bez modelu i grę w `processing`;
 - galerię, brak galerii i zablokowane kontrybucje;
 - znaleziony i nieznaleziony barcode;
@@ -375,6 +436,9 @@ obiektów z prawdziwym Firebase Auth w sposób, który mógłby trafić na produ
 - Search poprawnie rozróżnia wynik lokalny od wyniku BGG i nigdy nie zgaduje slugu.
 - Katalog zachowuje filtry i paginację w URL.
 - Szczegóły gry obsługują brakujące dane, galerię, barcode i model GLB.
+- Szczegóły gry przełączają CTA/sekcję „Moja kopia” na podstawie `on_my_shelf`.
+- CRUD półki, filtry, statystyki i import BGG mają komplet stanów UX.
+- Publiczna półka nigdy nie wyświetla prywatnych notatek.
 - Custom game wysyła poprawny multipart i pokazuje oczekiwanie na moderację.
 - Galeria, barcode oraz model 3D mają jasny status zgłoszenia.
 - Formularz 3D wymaga sześciu zdjęć i oferuje rotacje 0/90/180/270.

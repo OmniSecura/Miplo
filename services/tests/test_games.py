@@ -601,6 +601,25 @@ class GamesServiceTests(unittest.TestCase):
         self.assertEqual(game.description, "Economic game")
         self.assertEqual(game.categories, ["Economic"])
 
+    def test_bgg_games_are_fetched_in_one_batch(self) -> None:
+        xml = ET.fromstring(
+            """
+            <items>
+              <item id="1"><name type="primary" value="One"/></item>
+              <item id="2"><name type="primary" value="Two"/></item>
+            </items>
+            """
+        )
+        get_xml = AsyncMock(return_value=xml)
+        with (
+            patch("services.app.core.bgg_client._require_token"),
+            patch("services.app.core.bgg_client._get_xml", new=get_xml),
+        ):
+            games = asyncio.run(bgg_client.fetch_games([1, 2]))
+        self.assertEqual([(game.bgg_id, game.title) for game in games], [(1, "One"), (2, "Two")])
+        params = get_xml.await_args.args[2]
+        self.assertEqual(params, {"id": "1,2", "stats": "1"})
+
 
 if __name__ == "__main__":
     unittest.main()

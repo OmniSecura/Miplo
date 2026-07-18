@@ -165,6 +165,10 @@ class Game(Base):
         lazy="selectin",
         order_by="GameBarcode.language_code",
     )
+    shelf_items: Mapped[list["ShelfItem"]] = relationship(  # type: ignore[name-defined]
+        back_populates="game",
+        passive_deletes=True,
+    )
 
 
 class GameImage(Base):

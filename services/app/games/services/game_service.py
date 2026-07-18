@@ -181,7 +181,14 @@ def to_list_item(game: Game) -> GameListItem:
     )
 
 
-def to_detail(game: Game) -> GameDetail:
+def to_detail(game: Game, my_shelf_item=None) -> GameDetail:
+    shelf_response = None
+    if my_shelf_item is not None:
+        # Lokalny import świadomie omija cykl games ↔ shelf. GameDetail jest
+        # kompozycją publicznych danych gry i prywatnego kontekstu bieżącego usera.
+        from services.app.shelf.services import shelf_service
+
+        shelf_response = shelf_service.to_response(my_shelf_item)
     return GameDetail(
         **to_list_item(game).model_dump(),
         description=game.description,
@@ -213,6 +220,8 @@ def to_detail(game: Game) -> GameDetail:
             for image in game.images
             if image.is_verified and image.image_url is not None
         ],
+        on_my_shelf=my_shelf_item is not None,
+        my_shelf_item=shelf_response,
     )
 
 
@@ -266,16 +275,15 @@ async def search_games(db: Session, query: str) -> list[GameSearchResult]:
     ]
 
 
-async def get_or_fetch_game(db: Session, bgg_id: int) -> Game:
-    game = db.scalar(select(Game).where(Game.bgg_id == bgg_id))
-    if game is not None and not is_stale(game):
-        return game
-
-    data = await bgg_client.fetch_game(bgg_id)
+def _apply_bgg_data(
+    db: Session,
+    data: bgg_client.BggGameData,
+    game: Game | None = None,
+) -> Game:
     types = _resolve_types(db, data.categories, from_bgg=True)
     if game is None:
         game = Game(
-            bgg_id=bgg_id,
+            bgg_id=data.bgg_id,
             slug=_generate_slug(db, data.title),
             source="bgg",
             is_verified=True,
@@ -293,6 +301,16 @@ async def get_or_fetch_game(db: Session, bgg_id: int) -> Game:
     game.cover_url = data.cover_url
     game.cached_at = datetime.now(timezone.utc)
     game.game_types = types
+    return game
+
+
+async def get_or_fetch_game(db: Session, bgg_id: int) -> Game:
+    game = db.scalar(select(Game).where(Game.bgg_id == bgg_id))
+    if game is not None and not is_stale(game):
+        return game
+
+    data = await bgg_client.fetch_game(bgg_id)
+    game = _apply_bgg_data(db, data, game)
 
     try:
         db.commit()
@@ -304,6 +322,51 @@ async def get_or_fetch_game(db: Session, bgg_id: int) -> Game:
         return raced
     db.refresh(game)
     return game
+
+
+async def get_or_fetch_games_batch(
+    db: Session,
+    bgg_ids: list[int],
+    *,
+    commit: bool = True,
+) -> dict[int, Game]:
+    """Upsert maksymalnie 20 gier jednym requestem BGG.
+
+    Przy ``commit=False`` pozostawia transakcję otwartą dla operacji złożonej,
+    np. importu półki, który wykonuje jeden commit na samym końcu.
+    """
+    unique_ids = list(dict.fromkeys(bgg_ids))
+    if not unique_ids or len(unique_ids) > 20 or any(item_id < 1 for item_id in unique_ids):
+        raise ValueError("batch must contain from 1 to 20 positive BGG IDs")
+
+    existing = db.scalars(select(Game).where(Game.bgg_id.in_(unique_ids))).all()
+    result = {game.bgg_id: game for game in existing if game.bgg_id is not None}
+    stale_ids = [
+        item_id
+        for item_id in unique_ids
+        if item_id not in result or is_stale(result[item_id])
+    ]
+    if stale_ids:
+        remote_games = await bgg_client.fetch_games(stale_ids)
+        for data in remote_games:
+            result[data.bgg_id] = _apply_bgg_data(db, data, result.get(data.bgg_id))
+
+    try:
+        db.flush()
+        if commit:
+            db.commit()
+    except IntegrityError:
+        db.rollback()
+        if not commit:
+            raise
+        # Równoległy import mógł wstawić te same BGG IDs. Odczyt po rollbacku
+        # zwraca zwycięskie rekordy bez dublowania katalogu.
+        return {
+            game.bgg_id: game
+            for game in db.scalars(select(Game).where(Game.bgg_id.in_(unique_ids))).all()
+            if game.bgg_id is not None
+        }
+    return result
 
 
 async def refresh_game_by_id(game_id: int) -> None:

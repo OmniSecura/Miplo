@@ -8,8 +8,10 @@ from fastapi import APIRouter
 from services.app.users.routers.router import users_router
 from services.app.games.routers.router import games_router
 from services.app.games.routers.moderation_router import moderation_router
+from services.app.shelf.routers.router import shelf_router
 
 api_router = APIRouter(prefix="/api")
 api_router.include_router(users_router)
 api_router.include_router(games_router)
 api_router.include_router(moderation_router)
+api_router.include_router(shelf_router)

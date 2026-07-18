@@ -14,7 +14,7 @@ zapytaniu, więc import modułu nie wymaga działającej bazy.
 from collections.abc import Generator
 from contextlib import contextmanager
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import URL
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
@@ -61,6 +61,15 @@ engine = create_engine(
     ),
 )
 
+
+if _is_sqlite:
+    @event.listens_for(engine, "connect")
+    def _enable_sqlite_foreign_keys(dbapi_connection, _connection_record) -> None:
+        """SQLite domyślnie ignoruje FK; local ma zachowywać CASCADE jak Postgres."""
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
 SessionLocal = sessionmaker(
     bind=engine,
     autocommit=False,
@@ -79,6 +88,7 @@ def create_all_for_local() -> None:
         return
     from services.app.users import models  # noqa: F401 — rejestruje modele w Base.metadata
     from services.app.games import models as _game_models  # noqa: F401
+    from services.app.shelf import models as _shelf_models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
 

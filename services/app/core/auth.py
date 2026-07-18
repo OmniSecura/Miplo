@@ -95,6 +95,26 @@ def get_current_user(
     return user
 
 
+def get_current_user_optional(
+    request: Request,
+    bearer: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
+    db: Session = Depends(get_db),
+) -> User | None:
+    """Opcjonalny kontekst aktywnego usera dla publicznych endpointów.
+
+    Brak nagłówka oznacza anonimowego klienta. Podany, ale niepoprawny token nie
+    jest ignorowany — przechodzi przez standardową walidację i zwraca 401.
+    """
+    if bearer is None:
+        if request.headers.get("authorization"):
+            raise ApiError.unauthorized(ErrorCode.INVALID_TOKEN)
+        return None
+    user = get_current_user_allow_inactive(request, bearer, db)
+    if not user.is_active:
+        raise ApiError.forbidden(ErrorCode.USER_INACTIVE)
+    return user
+
+
 def get_current_admin(user: User = Depends(get_current_user)) -> User:
     """Aktywny lokalny administrator; roli nie da się ustawić przez API."""
     if not user.is_admin:

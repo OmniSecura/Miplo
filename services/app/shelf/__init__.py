@@ -1,0 +1,1 @@
+"""Domena półki użytkownika."""

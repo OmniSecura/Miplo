@@ -38,6 +38,10 @@ OPENAPI_TAGS = [
         "name": "moderation",
         "description": "Kolejki oraz decyzje dostępne wyłącznie administratorom.",
     },
+    {
+        "name": "shelf",
+        "description": "Własna i publiczna półka gier oraz import kolekcji BGG.",
+    },
 ]
 
 
