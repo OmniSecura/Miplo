@@ -1,7 +1,6 @@
 """Logika domenowa games: cache BGG, katalog i customowe gry."""
 
 import json
-import logging
 import math
 import unicodedata
 from datetime import datetime, timedelta, timezone
@@ -15,7 +14,6 @@ from sqlalchemy.orm import Session
 
 from services.app.core import bgg_client
 from services.app.core.config import settings
-from services.app.core.database import db_session
 from services.app.core.errors import ApiError, ErrorCode
 from services.app.games.enums import GameLanguage
 from services.app.games.models import Game, GameBarcode, GameImage, GameType, game_game_types
@@ -33,9 +31,27 @@ from services.app.games.schemas import (
     PaginatedGames,
 )
 from services.app.games.services import cover_service, gallery_service
+from services.app.ratings.constants import MIPLO_MIN_RATINGS_FOR_DISPLAY
 from services.app.users.models import User
 
-logger = logging.getLogger(__name__)
+# Jedyna lista kolumn, które odpowiedź `/thing` z BGG może nadpisać.
+# Dane Miplo, media community, wymiary i model 3D pozostają nietknięte.
+BGG_UPDATABLE_FIELDS = frozenset(
+    {
+        "title",
+        "description",
+        "year_published",
+        "min_players",
+        "max_players",
+        "playing_time",
+        "rating",
+        "weight",
+        "users_rated",
+        "bgg_rank",
+        "cover_url",
+        "cached_at",
+    }
+)
 
 _BGG_CATEGORY_MAP: dict[str, str] = {
     "Economic": "Euro",
@@ -178,10 +194,17 @@ def to_list_item(game: Game) -> GameListItem:
         bgg_rank=game.bgg_rank,
         users_rated=game.users_rated,
         is_expansion=game.is_expansion,
+        miplo_rating=(
+            game.miplo_rating
+            if game.miplo_ratings_count >= MIPLO_MIN_RATINGS_FOR_DISPLAY
+            else None
+        ),
+        miplo_ratings_count=game.miplo_ratings_count,
+        miplo_reviews_count=game.miplo_reviews_count,
     )
 
 
-def to_detail(game: Game, my_shelf_item=None) -> GameDetail:
+def to_detail(game: Game, my_shelf_item=None, my_rating=None) -> GameDetail:
     shelf_response = None
     if my_shelf_item is not None:
         # Lokalny import świadomie omija cykl games ↔ shelf. GameDetail jest
@@ -222,6 +245,8 @@ def to_detail(game: Game, my_shelf_item=None) -> GameDetail:
         ],
         on_my_shelf=my_shelf_item is not None,
         my_shelf_item=shelf_response,
+        my_rating=my_rating.rating if my_rating is not None else None,
+        my_review=my_rating.review if my_rating is not None else None,
     )
 
 
@@ -243,10 +268,12 @@ async def search_games(db: Session, query: str) -> list[GameSearchResult]:
     if len(sanitized) < 2:
         return []
 
-    pattern = f"%{sanitized.lower()}%"
     local_games = db.scalars(
         select(Game)
-        .where(func.lower(Game.title).like(pattern), Game.is_verified.is_(True))
+        .where(
+            func.lower(Game.title).contains(sanitized.lower(), autoescape=True),
+            Game.is_verified.is_(True),
+        )
         .order_by(Game.bgg_rank.is_(None), Game.bgg_rank, Game.title)
         .limit(50)
     ).all()
@@ -290,16 +317,14 @@ def _apply_bgg_data(
         )
         db.add(game)
 
-    game.title = data.title
-    game.description = data.description
-    game.year_published = data.year_published
-    game.min_players = data.min_players
-    game.max_players = data.max_players
-    game.playing_time = data.playing_time
-    game.rating = data.rating
-    game.weight = data.weight
-    game.cover_url = data.cover_url
-    game.cached_at = datetime.now(timezone.utc)
+    bgg_values = {
+        field: getattr(data, field)
+        for field in BGG_UPDATABLE_FIELDS
+        if field != "cached_at"
+    }
+    bgg_values["cached_at"] = datetime.now(timezone.utc)
+    for field in BGG_UPDATABLE_FIELDS:
+        setattr(game, field, bgg_values[field])
     game.game_types = types
     return game
 
@@ -367,19 +392,6 @@ async def get_or_fetch_games_batch(
             if game.bgg_id is not None
         }
     return result
-
-
-async def refresh_game_by_id(game_id: int) -> None:
-    """Best-effort refresh używany przez BackgroundTasks z własną sesją."""
-    if not settings.BGG_API_TOKEN:
-        return
-    try:
-        with db_session() as db:
-            game = db.get(Game, game_id)
-            if game is not None and game.bgg_id is not None and is_stale(game):
-                await get_or_fetch_game(db, game.bgg_id)
-    except Exception:
-        logger.warning("Odświeżenie cache gry %d nie powiodło się", game_id, exc_info=True)
 
 
 def get_game_by_slug(db: Session, slug_or_title: str) -> Game | None:
@@ -481,7 +493,12 @@ def list_games(
 ) -> PaginatedGames:
     query = select(Game)
     if search:
-        query = query.where(func.lower(Game.title).like(f"%{search.strip()[:100].lower()}%"))
+        query = query.where(
+            func.lower(Game.title).contains(
+                search.strip()[:100].lower(),
+                autoescape=True,
+            )
+        )
     if players is not None:
         query = query.where(Game.min_players <= players, Game.max_players >= players)
     if game_type:
@@ -758,7 +775,7 @@ def begin_model_submission(db: Session, slug: str, current_user: User) -> tuple[
     _assert_contributions_open(game)
     if not game.is_verified and game.created_by_id != current_user.id:
         raise ApiError.forbidden(ErrorCode.NOT_GAME_OWNER)
-    if game.model_status in {"pending", "processing", "awaiting_review"}:
+    if _model_submission_blocks_new_job(game):
         raise ApiError.conflict(ErrorCode.MODEL_ALREADY_PROCESSING)
 
     job_id = str(uuid4())
@@ -783,9 +800,28 @@ def assert_model_submission_allowed(db: Session, slug: str, current_user: User) 
     _assert_contributions_open(game)
     if not game.is_verified and game.created_by_id != current_user.id:
         raise ApiError.forbidden(ErrorCode.NOT_GAME_OWNER)
-    if game.model_status in {"pending", "processing", "awaiting_review"}:
+    if _model_submission_blocks_new_job(game):
         raise ApiError.conflict(ErrorCode.MODEL_ALREADY_PROCESSING)
     return game
+
+
+def _model_submission_blocks_new_job(game: Game) -> bool:
+    """Pozwala odzyskać grę po ubiciu procesu w trakcie generowania.
+
+    Awaiting_review pozostaje zablokowane do decyzji moderatora. Pending lub
+    processing starsze niż 15 minut uznajemy za osierocone; stary job nie może
+    nadpisać nowego, bo generator porównuje również model_job_id.
+    """
+    if game.model_status == "awaiting_review":
+        return True
+    if game.model_status not in {"pending", "processing"}:
+        return False
+    submitted_at = game.model_submitted_at
+    if submitted_at is None:
+        return False
+    if submitted_at.tzinfo is None:
+        submitted_at = submitted_at.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - submitted_at <= timedelta(minutes=15)
 
 
 def delete_model_submission(db: Session, slug: str, current_user: User) -> None:

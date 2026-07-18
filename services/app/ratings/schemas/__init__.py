@@ -1,0 +1,33 @@
+from services.app.ratings.schemas.rating import (
+    GameRatingsSummary,
+    HideReviewRequest,
+    MyRatingResponse,
+    PaginatedMyRatings,
+    PaginatedRatings,
+    RatingAuthor,
+    RatingCreate,
+    RatingDistribution,
+    RatingResponse,
+    RatingUpdate,
+    ReportedReviewModeration,
+    ReviewReportCreate,
+    ReviewReportItem,
+    UserRatingStats,
+)
+
+__all__ = [
+    "GameRatingsSummary",
+    "HideReviewRequest",
+    "MyRatingResponse",
+    "PaginatedMyRatings",
+    "PaginatedRatings",
+    "RatingAuthor",
+    "RatingCreate",
+    "RatingDistribution",
+    "RatingResponse",
+    "RatingUpdate",
+    "ReportedReviewModeration",
+    "ReviewReportCreate",
+    "ReviewReportItem",
+    "UserRatingStats",
+]

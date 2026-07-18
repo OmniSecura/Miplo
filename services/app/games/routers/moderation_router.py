@@ -21,7 +21,11 @@ from services.app.users.models import User
 moderation_router = APIRouter(prefix="/admin/moderation", tags=["moderation"])
 
 
-@moderation_router.get("/games", response_model=list[PendingGameModeration])
+@moderation_router.get(
+    "/games",
+    response_model=list[PendingGameModeration],
+    summary="Pobierz gry oczekujące na moderację",
+)
 @limiter.limit(MODERATION_LIMIT)
 def pending_games(
     request: Request,
@@ -33,7 +37,11 @@ def pending_games(
     return moderation_service.list_pending_games(db, limit)
 
 
-@moderation_router.post("/games/{slug}/approve", response_model=GameDetail)
+@moderation_router.post(
+    "/games/{slug}/approve",
+    response_model=GameDetail,
+    summary="Zaakceptuj grę",
+)
 @limiter.limit(MODERATION_LIMIT)
 def approve_game(
     request: Request,
@@ -45,7 +53,11 @@ def approve_game(
     return moderation_service.approve_game(db, slug)
 
 
-@moderation_router.delete("/games/{slug}", status_code=status.HTTP_204_NO_CONTENT)
+@moderation_router.delete(
+    "/games/{slug}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Odrzuć grę",
+)
 @limiter.limit(MODERATION_LIMIT)
 def reject_game(
     request: Request,
@@ -57,7 +69,11 @@ def reject_game(
     moderation_service.reject_game(db, slug)
 
 
-@moderation_router.post("/games/{slug}/contributions/lock", response_model=GameDetail)
+@moderation_router.post(
+    "/games/{slug}/contributions/lock",
+    response_model=GameDetail,
+    summary="Zablokuj kontrybucje do gry",
+)
 @limiter.limit(MODERATION_LIMIT)
 def lock_contributions(
     request: Request,
@@ -69,7 +85,11 @@ def lock_contributions(
     return moderation_service.set_contributions_enabled(db, slug, False)
 
 
-@moderation_router.post("/games/{slug}/contributions/unlock", response_model=GameDetail)
+@moderation_router.post(
+    "/games/{slug}/contributions/unlock",
+    response_model=GameDetail,
+    summary="Odblokuj kontrybucje do gry",
+)
 @limiter.limit(MODERATION_LIMIT)
 def unlock_contributions(
     request: Request,
@@ -81,7 +101,11 @@ def unlock_contributions(
     return moderation_service.set_contributions_enabled(db, slug, True)
 
 
-@moderation_router.get("/images", response_model=list[PendingImageModeration])
+@moderation_router.get(
+    "/images",
+    response_model=list[PendingImageModeration],
+    summary="Pobierz zdjęcia oczekujące na moderację",
+)
 @limiter.limit(MODERATION_LIMIT)
 def pending_images(
     request: Request,
@@ -93,7 +117,11 @@ def pending_images(
     return moderation_service.list_pending_images(db, limit)
 
 
-@moderation_router.post("/images/{image_id}/approve", status_code=status.HTTP_204_NO_CONTENT)
+@moderation_router.post(
+    "/images/{image_id}/approve",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Zaakceptuj zdjęcie gry",
+)
 @limiter.limit(MODERATION_LIMIT)
 def approve_image(
     request: Request,
@@ -105,7 +133,11 @@ def approve_image(
     moderation_service.approve_image(db, image_id)
 
 
-@moderation_router.delete("/images/{image_id}", status_code=status.HTTP_204_NO_CONTENT)
+@moderation_router.delete(
+    "/images/{image_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Odrzuć zdjęcie gry",
+)
 @limiter.limit(MODERATION_LIMIT)
 def reject_image(
     request: Request,
@@ -117,7 +149,11 @@ def reject_image(
     moderation_service.reject_image(db, image_id)
 
 
-@moderation_router.get("/barcodes", response_model=list[PendingBarcodeModeration])
+@moderation_router.get(
+    "/barcodes",
+    response_model=list[PendingBarcodeModeration],
+    summary="Pobierz barcode oczekujące na moderację",
+)
 @limiter.limit(MODERATION_LIMIT)
 def pending_barcodes(
     request: Request,
@@ -132,6 +168,7 @@ def pending_barcodes(
 @moderation_router.post(
     "/barcodes/{barcode_id}/approve",
     status_code=status.HTTP_204_NO_CONTENT,
+    summary="Zaakceptuj barcode gry",
 )
 @limiter.limit(MODERATION_LIMIT)
 def approve_barcode(
@@ -147,6 +184,7 @@ def approve_barcode(
 @moderation_router.delete(
     "/barcodes/{barcode_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    summary="Odrzuć barcode gry",
 )
 @limiter.limit(MODERATION_LIMIT)
 def reject_barcode(
@@ -159,7 +197,11 @@ def reject_barcode(
     moderation_service.reject_barcode(db, barcode_id)
 
 
-@moderation_router.get("/models", response_model=list[PendingModelModeration])
+@moderation_router.get(
+    "/models",
+    response_model=list[PendingModelModeration],
+    summary="Pobierz modele 3D oczekujące na moderację",
+)
 @limiter.limit(MODERATION_LIMIT)
 def pending_models(
     request: Request,
@@ -171,7 +213,11 @@ def pending_models(
     return moderation_service.list_pending_models(db, limit)
 
 
-@moderation_router.post("/models/{slug}/approve", response_model=GameDetail)
+@moderation_router.post(
+    "/models/{slug}/approve",
+    response_model=GameDetail,
+    summary="Zaakceptuj model 3D gry",
+)
 @limiter.limit(MODERATION_LIMIT)
 def approve_model(
     request: Request,
@@ -183,7 +229,11 @@ def approve_model(
     return moderation_service.approve_model(db, slug)
 
 
-@moderation_router.delete("/models/{slug}", status_code=status.HTTP_204_NO_CONTENT)
+@moderation_router.delete(
+    "/models/{slug}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Odrzuć model 3D gry",
+)
 @limiter.limit(MODERATION_LIMIT)
 def reject_model(
     request: Request,

@@ -6,7 +6,6 @@ from uuid import UUID
 
 from fastapi import (
     APIRouter,
-    BackgroundTasks,
     Depends,
     File,
     Form,
@@ -25,6 +24,8 @@ from services.app.core.config import settings
 from services.app.core.database import get_db
 from services.app.core.errors import ApiError, ErrorCode
 from services.app.core.security.limiter import (
+    BGG_FETCH_LIMIT,
+    BGG_SEARCH_LIMIT,
     CATALOG_IMPORT_LIMIT,
     CUSTOM_GAME_LIMIT,
     DELETE_LIMIT,
@@ -68,8 +69,9 @@ TAG_3D_MODELS = ["3D models"]
     "/games/search",
     response_model=list[GameSearchResult],
     tags=TAG_GAMES,
+    summary="Wyszukaj grę po nazwie",
 )
-@limiter.limit(READ_LIMIT)
+@limiter.limit(BGG_SEARCH_LIMIT)
 async def search_games(
     request: Request,
     response: Response,
@@ -83,8 +85,9 @@ async def search_games(
     "/games/bgg/{bgg_id}",
     response_model=GameDetail,
     tags=TAG_BGG_GAMES,
+    summary="Pobierz lub odśwież grę z BGG",
 )
-@limiter.limit(WRITE_LIMIT)
+@limiter.limit(BGG_FETCH_LIMIT)
 async def fetch_game_from_bgg(
     request: Request,
     response: Response,
@@ -100,6 +103,7 @@ async def fetch_game_from_bgg(
     "/games/by-barcode/{barcode}",
     response_model=GameListItem,
     tags=TAG_GAMES,
+    summary="Znajdź grę po barcode",
 )
 @limiter.limit(READ_LIMIT)
 def get_game_by_barcode(
@@ -118,6 +122,7 @@ def get_game_by_barcode(
     "/games/import",
     response_model=CatalogImportResult,
     tags=TAG_BGG_GAMES,
+    summary="Importuj katalog BGG z pliku",
 )
 @limiter.limit(CATALOG_IMPORT_LIMIT)
 def import_games_catalog(
@@ -136,7 +141,12 @@ def import_games_catalog(
     return catalog_import_service.import_catalog(db, file)
 
 
-@games_router.get("/games", response_model=PaginatedGames, tags=TAG_GAMES)
+@games_router.get(
+    "/games",
+    response_model=PaginatedGames,
+    tags=TAG_GAMES,
+    summary="Pobierz katalog gier",
+)
 @limiter.limit(READ_LIMIT)
 def list_games(
     request: Request,
@@ -168,6 +178,7 @@ def list_games(
     response_model=GameDetail,
     status_code=status.HTTP_201_CREATED,
     tags=TAG_CUSTOM_GAMES,
+    summary="Dodaj customową grę",
 )
 @limiter.limit(CUSTOM_GAME_LIMIT)
 async def create_custom_game(
@@ -187,6 +198,7 @@ async def create_custom_game(
     response_model=GameImageSubmission,
     status_code=status.HTTP_202_ACCEPTED,
     tags=TAG_GAME_GALLERY,
+    summary="Zaproponuj zdjęcie gry",
 )
 @limiter.limit(GALLERY_UPLOAD_LIMIT)
 async def submit_game_image(
@@ -205,6 +217,7 @@ async def submit_game_image(
     "/games/{slug}/images/{image_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     tags=TAG_GAME_GALLERY,
+    summary="Usuń propozycję zdjęcia gry",
 )
 @limiter.limit(DELETE_LIMIT)
 def delete_game_image(
@@ -223,12 +236,12 @@ def delete_game_image(
     response_model=GameDetail,
     status_code=status.HTTP_202_ACCEPTED,
     tags=TAG_3D_MODELS,
+    summary="Zaproponuj model 3D pudełka",
 )
 @limiter.limit(MODEL_UPLOAD_LIMIT)
 async def submit_3d_model(
     request: Request,
     response: Response,
-    background_tasks: BackgroundTasks,
     slug: str = Path(min_length=1, max_length=200),
     file_front: UploadFile | None = File(None),
     file_back: UploadFile | None = File(None),
@@ -273,14 +286,19 @@ async def submit_3d_model(
         "top": int(rotation_top),
         "bottom": int(rotation_bottom),
     }
-    background_tasks.add_task(
-        box_generator_service.generate_and_upload,
+    # Celowo czekamy w requestcie: FastAPI BackgroundTasks nie jest trwałą
+    # kolejką, a Cloud Run może odebrać CPU lub ubić instancję po odpowiedzi.
+    await box_generator_service.generate_and_upload(
         game.id,
         job_id,
         raw_sides,
         dimensions,
         rotations,
     )
+    db.expire_all()
+    game = game_service.get_game_by_slug(db, slug)
+    if game is None:
+        raise ApiError.not_found(ErrorCode.GAME_NOT_FOUND)
     return game_service.to_detail(game)
 
 
@@ -288,6 +306,7 @@ async def submit_3d_model(
     "/games/{slug}/3d-model",
     status_code=status.HTTP_204_NO_CONTENT,
     tags=TAG_3D_MODELS,
+    summary="Usuń propozycję modelu 3D",
 )
 @limiter.limit(DELETE_LIMIT)
 def delete_3d_model(
@@ -305,6 +324,7 @@ def delete_3d_model(
     response_model=BarcodeSubmission,
     status_code=status.HTTP_202_ACCEPTED,
     tags=TAG_GAMES,
+    summary="Zaproponuj barcode dla gry",
 )
 @limiter.limit(WRITE_LIMIT)
 def propose_barcode_for_game(
@@ -328,6 +348,7 @@ def propose_barcode_for_game(
     "/games/{slug}",
     response_model=GameDetail,
     tags=TAG_CUSTOM_GAMES,
+    summary="Edytuj moją customową grę",
 )
 @limiter.limit(WRITE_LIMIT)
 async def update_custom_game(
@@ -347,6 +368,7 @@ async def update_custom_game(
     "/games/{slug}",
     status_code=status.HTTP_204_NO_CONTENT,
     tags=TAG_CUSTOM_GAMES,
+    summary="Usuń moją customową grę",
 )
 @limiter.limit(DELETE_LIMIT)
 def delete_custom_game(
@@ -359,12 +381,16 @@ def delete_custom_game(
     game_service.delete_custom_game(db, slug, current_user)
 
 
-@games_router.get("/games/{slug}", response_model=GameDetail, tags=TAG_GAMES)
+@games_router.get(
+    "/games/{slug}",
+    response_model=GameDetail,
+    tags=TAG_GAMES,
+    summary="Pobierz szczegóły gry",
+)
 @limiter.limit(READ_LIMIT)
 def get_game_detail(
     request: Request,
     response: Response,
-    background_tasks: BackgroundTasks,
     slug: str = Path(min_length=1, max_length=200),
     current_user: User | None = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
@@ -375,11 +401,17 @@ def get_game_detail(
         raise ApiError.not_found(ErrorCode.GAME_NOT_FOUND)
     if not game.is_verified:
         raise ApiError.not_found(ErrorCode.GAME_NOT_FOUND)
-    if game_service.is_stale(game):
-        background_tasks.add_task(game_service.refresh_game_by_id, game.id)
+    # Publiczny odczyt nie uruchamia pracy po wysłaniu odpowiedzi. Stare dane
+    # odświeża chroniony GET /games/bgg/{bgg_id} albo import katalogu.
     shelf_item = (
         shelf_service.is_on_shelf(db, current_user.id, game.id)
         if current_user is not None
         else None
     )
-    return game_service.to_detail(game, shelf_item)
+    own_rating = None
+    if current_user is not None:
+        # Lokalny import omija cykl modułów games <-> ratings.
+        from services.app.ratings.services import rating_service
+
+        own_rating = rating_service.get_user_rating(db, current_user.id, game.id)
+    return game_service.to_detail(game, shelf_item, own_rating)

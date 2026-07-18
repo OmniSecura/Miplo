@@ -2,7 +2,7 @@
 
 Moduł `shelf` przechowuje informację „jakie gry posiada user” oraz dane jego
 konkretnego egzemplarza. Nie kopiuje danych katalogowych gry i nie przechowuje
-ocen użytkownika — oceny będą osobną domeną `ratings`.
+ocen użytkownika — oceny należą do osobnej domeny `ratings`.
 
 ## Granice odpowiedzialności
 
@@ -44,8 +44,8 @@ Wszystkie endpointy półki wymagają aktywnego usera.
 
 `GET /api/me/shelf` przyjmuje `page`, `size`, `lendable`, `search`, `condition`,
 `players` i `sort`. Enum sortowania zawiera `added_at`, `title`, `game_rating`
-oraz zarezerwowane `miplo_rating`. Ostatnia opcja zwraca obecnie
-`501 ratings_not_available`, ponieważ agregaty Miplo powstaną w module ratings.
+oraz `miplo_rating`. Sort Miplo jest aktywny; gry poniżej progu trzech ocen mają
+publiczne `game_miplo_rating=null` i są ustawiane za zaufanymi wynikami.
 
 Przykład dodania gry:
 
@@ -109,8 +109,9 @@ zwracany jest bezpiecznie częściowy wynik z licznikami `imported`, `skipped` i
 `failed`. Import nigdy nie usuwa istniejących pozycji. Wyścig z równoległym
 „Dodaj na półkę” jest izolowany SAVEPOINT-em i liczy się jako `skipped`.
 
-`import_ratings=true` zwraca obecnie `501 ratings_not_available`. Jest to celowe:
-backend nie udaje sukcesu, dopóki domena `ratings` nie istnieje.
+`import_ratings=true` przenosi dostępne oceny usera z BGG. Wynik jest zaokrąglany
+do kroku 0.5, zapisywany ze `source=bgg_import` i nigdy nie nadpisuje istniejącej
+oceny Miplo. `ratings_imported` podaje liczbę faktycznie dodanych ocen.
 
 ## Zapytania i wydajność
 
@@ -136,5 +137,5 @@ services\.venv\Scripts\python.exe -B -m unittest services.tests.test_shelf -v
 ```
 
 Testy modułu shelf pokrywają CRUD i ownership, prywatność, filtry, brak N+1,
-statystyki, opcjonalny auth, kontekst gry, batchowy import, odroczenie ratings,
+statystyki, opcjonalny auth, kontekst gry, batchowy import ocen,
 moderację katalogu oraz kaskadowe usuwanie.

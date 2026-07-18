@@ -9,7 +9,9 @@ import logging
 from enum import Enum
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +20,11 @@ class ErrorCode(str, Enum):
     """Wszystkie kody błędów API w jednym miejscu — kontrakt z frontendem."""
 
     # ── Auth ──────────────────────────────────────────────────────────
-    INVALID_TOKEN = "invalid_token"
-    TOKEN_EXPIRED = "token_expired"
+    # Te wartości są publicznymi kodami kontraktu API, a nie sekretami.
+    INVALID_TOKEN = "invalid_token"  # nosec B105
+    TOKEN_EXPIRED = "token_expired"  # nosec B105
+    TOKEN_REVOKED = "token_revoked"  # nosec B105
+    AUTH_PROVIDER_UNAVAILABLE = "auth_provider_unavailable"
     UNAUTHORIZED = "unauthorized"
     FORBIDDEN = "forbidden"
     ADMIN_REQUIRED = "admin_required"
@@ -65,6 +70,16 @@ class ErrorCode(str, Enum):
     INVALID_CONDITION = "invalid_condition"
     RATINGS_NOT_AVAILABLE = "ratings_not_available"
 
+    # Ratings / reviews
+    ALREADY_RATED = "already_rated"
+    NOT_RATED_YET = "not_rated_yet"
+    INVALID_RATING_VALUE = "invalid_rating_value"
+    REVIEW_TOO_SHORT = "review_too_short"
+    REVIEW_ALREADY_REPORTED = "review_already_reported"
+    CANNOT_REPORT_OWN_REVIEW = "cannot_report_own_review"
+    RATING_HIDDEN = "rating_hidden"
+    RATING_NOT_FOUND = "rating_not_found"
+
     # ── Pliki / upload ────────────────────────────────────────────────
     FILE_TOO_LARGE = "file_too_large"
     INVALID_FILE_TYPE = "invalid_file_type"
@@ -83,12 +98,15 @@ class ErrorCode(str, Enum):
 
     # ── Rate limiting ─────────────────────────────────────────────────
     RATE_LIMIT_EXCEEDED = "rate_limit_exceeded"
+    RATE_LIMIT_BACKEND_UNAVAILABLE = "rate_limit_backend_unavailable"
 
     # ── Ogólne ────────────────────────────────────────────────────────
     VALIDATION_ERROR = "validation_error"
     PAYLOAD_TOO_LARGE = "payload_too_large"
     LENGTH_REQUIRED = "length_required"
     INTERNAL_ERROR = "internal_error"
+    ROUTE_NOT_FOUND = "route_not_found"
+    METHOD_NOT_ALLOWED = "method_not_allowed"
 
 
 class ApiError(HTTPException):
@@ -154,4 +172,58 @@ def register_error_handlers(app: FastAPI) -> None:
             content={"detail": {"error_code": ErrorCode.INTERNAL_ERROR.value}},
         )
 
+    async def _validation_error_handler(
+        request: Request,
+        exc: RequestValidationError,
+    ) -> JSONResponse:
+        errors = []
+        for issue in exc.errors():
+            location = [str(part) for part in issue.get("loc", ()) if part != "body"]
+            errors.append(
+                {
+                    "field": ".".join(location) or "request",
+                    "rule": str(issue.get("type", "validation_error")),
+                }
+            )
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": {
+                    "error_code": ErrorCode.VALIDATION_ERROR.value,
+                    "details": {"errors": errors},
+                }
+            },
+        )
+
+    async def _http_error_handler(
+        request: Request,
+        exc: StarletteHTTPException,
+    ) -> JSONResponse:
+        if isinstance(exc.detail, dict) and "error_code" in exc.detail:
+            detail = exc.detail
+        else:
+            code_by_status = {
+                400: ErrorCode.VALIDATION_ERROR,
+                401: ErrorCode.UNAUTHORIZED,
+                403: ErrorCode.FORBIDDEN,
+                404: ErrorCode.ROUTE_NOT_FOUND,
+                405: ErrorCode.METHOD_NOT_ALLOWED,
+                413: ErrorCode.PAYLOAD_TOO_LARGE,
+                422: ErrorCode.VALIDATION_ERROR,
+                429: ErrorCode.RATE_LIMIT_EXCEEDED,
+            }
+            fallback = (
+                ErrorCode.INTERNAL_ERROR
+                if exc.status_code >= 500
+                else ErrorCode.VALIDATION_ERROR
+            )
+            detail = {"error_code": code_by_status.get(exc.status_code, fallback).value}
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": detail},
+            headers=exc.headers,
+        )
+
+    app.add_exception_handler(RequestValidationError, _validation_error_handler)
+    app.add_exception_handler(StarletteHTTPException, _http_error_handler)
     app.add_exception_handler(Exception, _internal_error_handler)

@@ -10,11 +10,12 @@ Aktualny katalog endpointów. Prefix API: `/api`. Interaktywny kontrakt OpenAPI:
 - `401` oznacza brak/niepoprawny token, `403` brak uprawnień, `429` limit.
 - `READ_LIMIT`: 60/min, `WRITE_LIMIT`: 20/min, `DELETE_LIMIT`: 5/h,
   upload avatara: 5/min, customowa gra: 5/h, galeria: 10/h, model 3D: 3/h,
-  import katalogu: 1/h, import kolekcji BGG: 2/h.
+  import katalogu: 1/h, import kolekcji BGG: 2/h, oceny: 20/h,
+  zgłoszenia recenzji: 10/h.
 - Wewnętrzne `users.id` i `firebase_uid` nigdy nie są zwracane.
 
 Swagger dzieli operacje wyłącznie tagami: `users`, `games`, `BGG games`,
-`custom games`, `game gallery`, `3D models`, `shelf`, `moderation` i `system`. To nadal
+`custom games`, `game gallery`, `3D models`, `shelf`, `ratings`, `moderation` i `system`. To nadal
 jeden serwis, jeden prefix i jeden dokument OpenAPI.
 
 ## System
@@ -93,8 +94,8 @@ Auth: tak. Zwraca `{items,total,page,size,pages}` dla aktualnego usera. Parametr
 - `players` — od 1 do 50;
 - `sort` — dropdown `added_at | title | game_rating | miplo_rating`.
 
-`sort=miplo_rating` zwraca na razie `501 ratings_not_available`. Widok własny
-zawiera prywatne pole `notes`.
+`sort=miplo_rating` sortuje po zaufanej średniej Miplo. Wynik pozostaje `null`
+do zebrania trzech widocznych ocen. Widok własny zawiera prywatne pole `notes`.
 
 ### `POST /api/me/shelf`
 
@@ -130,14 +131,68 @@ Auth: tak. Limit `2/hour`. Body:
 
 Importuje posiadane gry addytywnie, paczkami po 20 BGG ID, z limitem 180 sekund.
 Odpowiedź zawiera `imported`, `skipped`, `failed`, `ratings_imported` i
-`total_in_bgg`. Timeout zwraca wynik częściowy. `import_ratings=true` daje obecnie
-`501 ratings_not_available`, dopóki nie powstanie moduł ratings.
+`total_in_bgg`. Timeout zwraca wynik częściowy. `import_ratings=true` importuje
+oceny BGG bez nadpisywania istniejących ocen Miplo.
 
 ### `GET /api/users/{tag}/shelf`
 
 Auth: tak. Zwraca półkę aktywnego usera po publicznym tagu, z paginacją i filtrem
 `lendable`. Nie zawiera prywatnego `notes`. Kaucja i warunki są zwracane tylko dla
 pozycji z `lendable=true`. Niezweryfikowane gry są ukryte.
+
+## Ratings — oceny i recenzje
+
+### `GET /api/games/{slug}/ratings/summary`
+
+Auth: opcjonalny. Zwraca rating i liczbę głosów BGG, ranking BGG, wynik/liczniki
+Miplo, rozkład, ważony `combined_rating` oraz kontekst `my_rating`, `my_review` i
+`has_game_on_shelf`. Wynik Miplo i rozkład są `null` poniżej trzech ocen.
+
+### `GET /api/games/{slug}/ratings`
+
+Auth: opcjonalny. Publiczna paginacja ocen, maks. 50 na stronę. Filtry:
+`with_review`, `min_rating`, `max_rating`; sort:
+`newest | rating_desc | rating_asc`. Ukryte oceny nigdy nie są zwracane.
+
+### `POST /api/games/{slug}/ratings`
+
+Auth: tak. Limit 20/h. Body zawiera `rating` 1–10 w kroku 0.5, opcjonalną
+`review` 10–5000 znaków i `contains_spoilers`. Odpowiedź `201`. Druga ocena tej
+samej gry daje `409 already_rated`.
+
+### `PUT /api/games/{slug}/ratings`
+
+Auth: tak. Limit 20/h. Częściowa edycja wyłącznie własnej oceny. `review=null`
+usuwa tekst recenzji. Brak oceny daje `404 not_rated_yet`; ukryta ocena
+`403 rating_hidden`.
+
+### `DELETE /api/games/{slug}/ratings`
+
+Auth: tak. Usuwa wyłącznie ocenę usera z tokenu i przelicza agregaty. Odpowiedź
+`204`. Nie usuwa gry ani pozycji z półki.
+
+### `POST /api/games/{slug}/ratings/{rating_id}/report`
+
+Auth: tak. Limit 10/h. Parametr `rating_id` oznacza pole `public_id` oceny — jest
+losowym UUID, nie wewnętrznym SERIAL. Autor nie może zgłosić własnej recenzji.
+Body:
+`reason=spam|offensive|spoilers|off_topic` i opcjonalne `details`. Duplikat daje
+`409 review_already_reported`, a własna recenzja
+`403 cannot_report_own_review`. Udana odpowiedź `200` zawiera:
+
+```json
+{"message_code":"review_reported"}
+```
+
+### `GET /api/me/ratings` i `GET /api/me/ratings/stats`
+
+Auth: tak. Pierwszy zwraca moje oceny z paginacją, danymi gry i informacją, czy
+ocena została ukryta. Drugi zwraca liczbę ocen/recenzji, średnią oraz najwyższą
+i najniższą wystawioną ocenę.
+
+### `GET /api/users/{tag}/ratings`
+
+Auth: tak. Publiczne, nieukryte oceny aktywnego usera. Nie zwraca wewnętrznych ID.
 
 ## Games — publiczny katalog i BGG
 
@@ -166,7 +221,7 @@ Publiczny katalog zawsze zwraca wyłącznie zweryfikowane gry.
 ### `GET /api/games/bgg/{bgg_id}`
 
 Auth: tak. Pobiera lub odświeża pełne szczegóły z BGG i zapisuje cache. Bez tokenu
-BGG zwraca `503 bgg_not_configured`. Limit `WRITE_LIMIT` chroni token BGG.
+BGG zwraca `503 bgg_not_configured`. Dedykowany limit `30/hour` chroni token BGG.
 
 ### `GET /api/games/by-barcode/{barcode}`
 
@@ -178,9 +233,9 @@ zweryfikowane gry; oczekująca propozycja nigdy nie wpływa na wynik skanowania.
 
 Auth: opcjonalny. Pełny widok gry. Bez tokenu działa publicznie; z poprawnym
 tokenem dodaje `on_my_shelf` i `my_shelf_item`. Błędny token daje `401`, nie jest
-ignorowany. Parametr może być slugiem lub zwykłą nazwą, np.
-`Brass Birmingham` jest normalizowane do `brass-birmingham`. Stary cache BGG jest
-zwracany od razu i odświeżany best-effort w tle.
+ignorowany. Dodaje też `my_rating` i `my_review`. Parametr może być slugiem lub zwykłą nazwą, np.
+`Brass Birmingham` jest normalizowane do `brass-birmingham`. Endpoint jest
+cache-only; odświeżenie wykonuje chroniony `/games/bgg/{bgg_id}`.
 
 ### `POST /api/games/{slug}/barcodes`
 
@@ -264,7 +319,8 @@ Zaakceptowane zdjęcia są zwracane w tablicy `images` obiektu `GameDetail`.
 Auth: tak. Dla customowej gry wyłącznie twórca; dla BGG dowolny zalogowany user.
 Limit 3/h. `multipart/form-data` z sześcioma polami: `file_front`, `file_back`,
 `file_left`, `file_right`, `file_top`, `file_bottom`. Każdy obraz ma limit 2 MB,
-a cały formularz 14 MB. Odpowiedź `202` i `model_status="pending"`.
+a cały formularz 14 MB. Odpowiedź `202` po generowaniu ma
+`model_status="awaiting_review"` albo `model_status="failed"`.
 
 Znaczenie plików jest stałe: `front` = duże wieko, `back` = duży spód,
 `left/right` = pionowe krawędzie, `top/bottom` = poziome krawędzie. Opcjonalne
@@ -274,9 +330,10 @@ pola formularza `rotation_front`, `rotation_back`, `rotation_left`,
 Backend automatycznie poprawia oczywisty obrót 90° wynikający z proporcji, ale
 wartość rotation pozwala frontendowi poprawić także zdjęcie odwrócone o 180°.
 
-Generator w tle tworzy dwuczęściowy GLB (`BoxBase` + `BoxLid`) z osadzonymi
-teksturami. Sukces przechodzi do `awaiting_review`; publiczny `model_3d_url`
-pojawia się dopiero po akceptacji administratora.
+Generator działa w ograniczonym slocie podczas aktywnego requestu i tworzy
+dwuczęściowy GLB (`BoxBase` + `BoxLid`) z osadzonymi teksturami. Odpowiedź `202`
+przychodzi po zakończeniu generowania ze stanem `awaiting_review` albo `failed`;
+publiczny `model_3d_url` pojawia się dopiero po akceptacji administratora.
 
 Po zweryfikowaniu gry każdy aktywny user może przesłać lepszą propozycję sześciu
 grafik. Poprzedni zaakceptowany GLB pozostaje publiczny przez całe generowanie i
@@ -335,6 +392,15 @@ mógł ukrywać formularze.
   atomowo zastępuje dotychczasowy kod tego samego języka. Odpowiedź `204`.
 - `DELETE /api/admin/moderation/barcodes/{barcode_id}` — odrzuca propozycję.
 
+Recenzje:
+
+- `GET /api/admin/moderation/reviews` — zgłoszone recenzje i liczba zgłoszeń;
+  wiele osób może zgłosić jedną recenzję, a kolejka pokazuje najpierw wpisy
+  z największym `report_count`;
+- `POST /api/admin/moderation/reviews/{rating_id}/hide` — ukrywa ocenę i przelicza wynik;
+- `POST /api/admin/moderation/reviews/{rating_id}/restore` — przywraca ocenę albo
+  pozostawia ją widoczną i zamyka bezzasadne zgłoszenia.
+
 ## Games — import operatorski
 
 ### `POST /api/games/import`
@@ -352,5 +418,5 @@ Sekret operatorski pochodzi z `GAMES_IMPORT_KEY` w Secret Managerze/.env.
 
 ## Celowo nieobecne
 
-- endpointy `ratings`, matchmakingu i venues — to kolejne domeny;
-- import ocen z BGG: `import_ratings=true` jest jawnie odrzucane do czasu ratings.
+- endpointy matchmakingu i venues — to kolejne domeny;
+- reakcje helpful/not-helpful dla recenzji — osobny przyszły ticket.

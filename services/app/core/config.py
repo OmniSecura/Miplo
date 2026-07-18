@@ -70,9 +70,14 @@ class Settings(BaseSettings):
     # ── HTTP ──────────────────────────────────────────────────────────────────
 
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:4173"
+    ALLOWED_HOSTS: str = "localhost,127.0.0.1,testserver"
 
     # dev: pamięć procesu; prod: redis://... (wspólny licznik dla wielu instancji)
     RATE_LIMIT_STORAGE_URI: str = "memory://"
+    GLOBAL_IP_RATE_LIMIT: str = Field(
+        default="120/minute",
+        pattern=r"^[1-9][0-9]*/(second|minute|hour)$",
+    )
 
     # ── BGG API ──────────────────────────────────────────────────────────────
     BGG_API_BASE: str = Field(
@@ -82,6 +87,11 @@ class Settings(BaseSettings):
     )
     BGG_API_TOKEN: str | None = None
     BGG_CACHE_TTL_SECONDS: int = Field(default=86400, ge=60, le=604800)
+
+    # Generowanie GLB pozostaje wewnątrz requestu (Cloud Run przydziela wtedy CPU),
+    # z jawną granicą równoległości i czasu wykonania.
+    MODEL_GENERATION_CONCURRENCY: int = Field(default=1, ge=1, le=4)
+    MODEL_GENERATION_TIMEOUT_SECONDS: int = Field(default=90, ge=15, le=300)
 
     # Sekret operatorski do masowego importu katalogu CSV/JSON. To nie jest
     # zwykła akcja usera i nie może być chroniona wyłącznie tokenem Firebase.
@@ -95,6 +105,10 @@ class Settings(BaseSettings):
     def allowed_origins_list(self) -> list[str]:
         return [o.strip() for o in self.ALLOWED_ORIGINS.split(",") if o.strip()]
 
+    @property
+    def allowed_hosts_list(self) -> list[str]:
+        return [h.strip() for h in self.ALLOWED_HOSTS.split(",") if h.strip()]
+
     @model_validator(mode="after")
     def _require_db_config_for_env(self) -> "Settings":
         if self.ENV == "dev":
@@ -107,6 +121,15 @@ class Settings(BaseSettings):
                 raise ValueError(f"ENV=dev wymaga zmiennych: {', '.join(missing)}")
         if self.ENV == "prod" and self.DATABASE_URL is None:
             raise ValueError("ENV=prod wymaga zmiennej DATABASE_URL")
+        if self.ENV == "prod":
+            if not self.RATE_LIMIT_STORAGE_URI.startswith(("redis://", "rediss://")):
+                raise ValueError(
+                    "ENV=prod wymaga współdzielonego RATE_LIMIT_STORAGE_URI redis:// lub rediss://"
+                )
+            if "*" in self.allowed_origins_list:
+                raise ValueError("ENV=prod nie pozwala na wildcard w ALLOWED_ORIGINS")
+            if not self.allowed_hosts_list or "*" in self.allowed_hosts_list:
+                raise ValueError("ENV=prod wymaga jawnej listy ALLOWED_HOSTS")
         return self
 
 

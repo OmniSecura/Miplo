@@ -6,9 +6,11 @@ import logging
 import re
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
-from xml.etree import ElementTree as ET
+from urllib.parse import urlsplit
 
 import httpx
+from defusedxml import ElementTree as ET
+from defusedxml.common import DefusedXmlException
 
 from services.app.core.config import settings
 from services.app.core.errors import ApiError, ErrorCode
@@ -39,6 +41,8 @@ class BggGameData:
     playing_time: int | None
     rating: Decimal | None
     weight: Decimal | None
+    users_rated: int | None
+    bgg_rank: int | None
     cover_url: str | None
     categories: list[str]
 
@@ -102,6 +106,20 @@ def _clean_description(raw: str | None) -> str | None:
     return text[:5000] or None
 
 
+def _safe_cover_url(raw: str | None) -> str | None:
+    """Akceptuje wyłącznie HTTPS z oficjalnych domen obrazów BGG."""
+    if not raw:
+        return None
+    value = raw.strip()
+    parsed = urlsplit(value)
+    host = (parsed.hostname or "").lower()
+    allowed = host == "boardgamegeek.com" or host.endswith(".geekdo-images.com")
+    if parsed.scheme != "https" or not allowed or parsed.username or parsed.password:
+        logger.warning("BGG zwrócił niedozwolony URL okładki")
+        return None
+    return value[:1000]
+
+
 async def _get_xml(
     client: httpx.AsyncClient,
     path: str,
@@ -112,36 +130,53 @@ async def _get_xml(
     url = f"{settings.BGG_API_BASE.rstrip('/')}/{path.lstrip('/')}"
     for attempt in range(len(_RETRY_DELAYS) + 1):
         try:
-            response = await client.get(url, params=params, headers=_headers())
+            async with client.stream(
+                "GET",
+                url,
+                params=params,
+                headers=_headers(),
+            ) as response:
+                if response.status_code == 202:
+                    if attempt == len(_RETRY_DELAYS):
+                        break
+                    await asyncio.sleep(_RETRY_DELAYS[attempt])
+                    continue
+                if response.status_code == 429:
+                    logger.warning("BGG odrzucił request limitem 429")
+                    raise ApiError(503, ErrorCode.BGG_RATE_LIMITED)
+                if response.status_code == 404 and not_found_code is not None:
+                    raise ApiError.not_found(not_found_code)
+                if response.status_code >= 400:
+                    logger.warning("BGG odpowiedział %d dla %s", response.status_code, path)
+                    raise ApiError(502, ErrorCode.BGG_UNAVAILABLE)
+                if response.status_code != 200:
+                    # Redirectów celowo nie śledzimy: token Bearer nie może
+                    # zostać wysłany do hosta wskazanego przez odpowiedź.
+                    logger.warning("Nieoczekiwany status BGG %d", response.status_code)
+                    raise ApiError(502, ErrorCode.BGG_UNAVAILABLE)
+
+                payload = bytearray()
+                async for chunk in response.aiter_bytes():
+                    if len(payload) + len(chunk) > _MAX_XML_BYTES:
+                        logger.error("BGG XML przekroczył limit %d bajtów", _MAX_XML_BYTES)
+                        raise ApiError(502, ErrorCode.BGG_UNAVAILABLE)
+                    payload.extend(chunk)
         except httpx.TimeoutException:
-            logger.warning("BGG timeout: %s %s (attempt %d)", path, params, attempt + 1)
+            # Params mogą zawierać nick kolekcji lub tekst wyszukiwania.
+            logger.warning("BGG timeout: %s (attempt %d)", path, attempt + 1)
             if attempt == len(_RETRY_DELAYS):
                 raise ApiError(502, ErrorCode.BGG_UNAVAILABLE)
             await asyncio.sleep(_RETRY_DELAYS[attempt])
             continue
+        except ApiError:
+            raise
         except httpx.HTTPError:
             logger.exception("Błąd transportu BGG: %s", path)
             raise ApiError(502, ErrorCode.BGG_UNAVAILABLE)
 
-        if response.status_code == 202:
-            if attempt == len(_RETRY_DELAYS):
-                break
-            await asyncio.sleep(_RETRY_DELAYS[attempt])
-            continue
-        if response.status_code == 429:
-            logger.warning("BGG odrzucił request limitem 429")
-            raise ApiError(503, ErrorCode.BGG_RATE_LIMITED)
-        if response.status_code == 404 and not_found_code is not None:
-            raise ApiError.not_found(not_found_code)
-        if response.status_code >= 400:
-            logger.warning("BGG odpowiedział %d dla %s", response.status_code, path)
-            raise ApiError(502, ErrorCode.BGG_UNAVAILABLE)
-        if len(response.content) > _MAX_XML_BYTES:
-            logger.error("BGG XML przekroczył limit %d bajtów", _MAX_XML_BYTES)
-            raise ApiError(502, ErrorCode.BGG_UNAVAILABLE)
         try:
-            return ET.fromstring(response.content)
-        except ET.ParseError:
+            return ET.fromstring(bytes(payload))
+        except (ET.ParseError, DefusedXmlException):
             logger.warning("BGG zwrócił niepoprawny XML dla %s", path)
             raise ApiError(502, ErrorCode.BGG_UNAVAILABLE)
 
@@ -183,6 +218,11 @@ def _parse_game_item(item: ET.Element) -> BggGameData | None:
     description_element = item.find("description")
     image_element = item.find("image")
     ratings = item.find(".//statistics/ratings")
+    boardgame_rank = (
+        ratings.find("ranks/rank[@name='boardgame']")
+        if ratings is not None
+        else None
+    )
     return BggGameData(
         bgg_id=bgg_id,
         title=title,
@@ -197,10 +237,12 @@ def _parse_game_item(item: ET.Element) -> BggGameData | None:
         weight=_safe_decimal(
             ratings.find("averageweight") if ratings is not None else None
         ),
-        cover_url=(
-            image_element.text.strip()
-            if image_element is not None and image_element.text
-            else None
+        users_rated=_safe_int(
+            ratings.find("usersrated") if ratings is not None else None
+        ),
+        bgg_rank=_safe_int(boardgame_rank),
+        cover_url=_safe_cover_url(
+            image_element.text if image_element is not None else None
         ),
         categories=[
             link.get("value", "").strip()

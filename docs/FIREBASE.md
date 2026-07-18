@@ -31,7 +31,8 @@ w `core/auth.py`). Endpoint rejestracji nie istnieje i ma nie istnieć.
 ```
 
 Zły token → `401 {"detail": {"error_code": "invalid_token"}}`. Wygasły →
-`401 ... "token_expired"` (frontend: odśwież token przez SDK i ponów). Brak tokenu →
+`401 ... "token_expired"` (frontend: odśwież token przez SDK i ponów), a
+odwołany/disabled → `401 ... "token_revoked"`. Brak tokenu →
 `401 ... "unauthorized"`. Konto dezaktywowane → `403 ... "user_inactive"`.
 Pełny katalog kodów: `services/app/core/errors.py` (enum `ErrorCode`) oraz
 [`ERRORS.md`](ERRORS.md).
@@ -136,13 +137,10 @@ należy dodatkowo sprawdzić w pełnym flow: zgłoszenie → prywatny podgląd m
 
 ## Usuwanie konta (RODO / wymóg Apple)
 
-`DELETE /me` robi trzy rzeczy, w tej kolejności:
-1. usuwa avatar z bucketa (padnięcie Storage nie blokuje reszty — tylko warning),
-2. twarde `DELETE` naszego rekordu (dane osobowe znikają z naszej bazy),
-3. `firebase_admin.auth.delete_user(uid)` — konto znika z Firebase.
-
-Gdyby krok 3 padł, dane z naszej bazy już nie istnieją, a user przy kolejnym
-logowaniu dostałby świeży, pusty profil — bez wycieku starych danych.
+`DELETE /me` najpierw blokuje konto Firebase i odwołuje refresh tokeny, następnie
+usuwa avatar i dane SQL, a na końcu wywołuje `delete_user`. Każdy request używa
+`verify_id_token(..., check_revoked=True)`, więc awaria ostatniego kroku nie
+pozwala odtworzyć lokalnego profilu starym tokenem.
 
 ## Zasady
 

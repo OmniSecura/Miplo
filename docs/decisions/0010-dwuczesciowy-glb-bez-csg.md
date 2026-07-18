@@ -36,5 +36,6 @@ Nie używamy `trimesh`, `numpy`, `pygltflib` ani plików tymczasowych.
 - generator jest deterministyczny i nie zależy od silnika CSG,
 - plik zawiera dwa logiczne elementy gotowe pod przyszłą animację otwierania,
 - wnętrze nie ma modelowanej grubości ścianek — obecny model służy półce 3D,
-- ciężki job działa teraz jako `BackgroundTasks`; przed skalowaniem produkcyjnym
+- ~~ciężki job działa jako `BackgroundTasks`~~ — zmienione przez ADR 0015:
+  obecnie działa podczas aktywnego requestu w ograniczonym slocie; przed skalowaniem
   należy przenieść go do Cloud Tasks/Cloud Run Jobs, aby przetrwał restart instancji.

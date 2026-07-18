@@ -33,9 +33,12 @@ Firebase Auth i bucket są inicjalizowane fail-fast w lifespanie aplikacji.
 | Zmienna | Domyślna wartość | Znaczenie |
 |---|---|---|
 | `ALLOWED_ORIGINS` | localhost:3000 i localhost:4173 | lista originów CORS rozdzielona przecinkami |
-| `RATE_LIMIT_STORAGE_URI` | `memory://` | backend liczników SlowAPI; na wielu instancjach użyj wspólnego Redis |
+| `ALLOWED_HOSTS` | localhost, 127.0.0.1, testserver | jawna allowlista nagłówka Host |
+| `RATE_LIMIT_STORAGE_URI` | `memory://` | backend limiterów; na prod wymagany Redis/Rediss |
+| `GLOBAL_IP_RATE_LIMIT` | `120/minute` | limit przed routingiem, auth i walidacją |
 
-Pamięciowy limiter nie synchronizuje liczników między instancjami Cloud Run.
+Pamięciowy limiter nie synchronizuje liczników między instancjami Cloud Run,
+dlatego `ENV=prod` odrzuca `memory://`, wildcard CORS oraz wildcard hostów.
 
 ## BoardGameGeek
 
@@ -44,6 +47,8 @@ Pamięciowy limiter nie synchronizuje liczników między instancjami Cloud Run.
 | `BGG_API_BASE` | `https://boardgamegeek.com/xmlapi2` | bazowy URL XML API 2, wyłącznie HTTPS |
 | `BGG_API_TOKEN` | brak | Bearer token aplikacji BGG |
 | `BGG_CACHE_TTL_SECONDS` | `86400` | TTL pełnych danych, dozwolone 60–604800 s |
+| `MODEL_GENERATION_CONCURRENCY` | `1` | liczba równoległych generatorów GLB na instancję |
+| `MODEL_GENERATION_TIMEOUT_SECONDS` | `90` | maks. oczekiwanie requestu na wolny slot generatora |
 
 Brak tokenu nie blokuje startu ani endpointów cache-only. Operacje wychodzące do
 BGG zwracają `503 bgg_not_configured`.

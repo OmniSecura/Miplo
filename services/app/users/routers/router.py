@@ -9,9 +9,11 @@ from fastapi import APIRouter, Depends, File, Path, Request, Response, UploadFil
 from sqlalchemy.orm import Session
 
 from services.app.core.auth import (
-    delete_firebase_account,
+    finalize_firebase_account_deletion,
     get_current_user,
     get_current_user_allow_inactive,
+    prepare_firebase_account_deletion,
+    restore_firebase_account_after_failed_deletion,
 )
 from services.app.core.database import get_db
 from services.app.core.errors import ApiError, ErrorCode
@@ -29,7 +31,7 @@ from services.app.users.services import avatar_service, user_service
 users_router = APIRouter(tags=["users"])
 
 
-@users_router.get("/me", response_model=UserProfile)
+@users_router.get("/me", response_model=UserProfile, summary="Pobierz mój profil")
 @limiter.limit(READ_LIMIT)
 def get_my_profile(
     request: Request,
@@ -39,7 +41,7 @@ def get_my_profile(
     return current_user
 
 
-@users_router.put("/me", response_model=UserProfile)
+@users_router.put("/me", response_model=UserProfile, summary="Edytuj mój profil")
 @limiter.limit(WRITE_LIMIT)
 def update_my_profile(
     request: Request,
@@ -51,7 +53,7 @@ def update_my_profile(
     return user_service.update_profile(db, current_user, payload)
 
 
-@users_router.post("/me/avatar", response_model=UserProfile)
+@users_router.post("/me/avatar", response_model=UserProfile, summary="Wgraj mój avatar")
 @limiter.limit(UPLOAD_LIMIT)
 async def upload_my_avatar(
     request: Request,
@@ -69,7 +71,11 @@ async def upload_my_avatar(
     return user_service.update_avatar_url(db, current_user, avatar_url)
 
 
-@users_router.delete("/me/avatar", status_code=status.HTTP_204_NO_CONTENT)
+@users_router.delete(
+    "/me/avatar",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Usuń mój avatar",
+)
 @limiter.limit(WRITE_LIMIT)
 def delete_my_avatar(
     request: Request,
@@ -82,7 +88,11 @@ def delete_my_avatar(
     user_service.update_avatar_url(db, current_user, None)
 
 
-@users_router.post("/me/deactivate", status_code=status.HTTP_204_NO_CONTENT)
+@users_router.post(
+    "/me/deactivate",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Dezaktywuj moje konto",
+)
 @limiter.limit(DELETE_LIMIT)
 def deactivate_my_account(
     request: Request,
@@ -95,7 +105,11 @@ def deactivate_my_account(
     user_service.deactivate(db, current_user)
 
 
-@users_router.post("/me/activate", status_code=status.HTTP_204_NO_CONTENT)
+@users_router.post(
+    "/me/activate",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Aktywuj ponownie moje konto",
+)
 @limiter.limit(WRITE_LIMIT)
 def activate_my_account(
     request: Request,
@@ -110,7 +124,11 @@ def activate_my_account(
     user_service.activate(db, current_user)
 
 
-@users_router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
+@users_router.delete(
+    "/me",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Usuń trwale moje konto",
+)
 @limiter.limit(DELETE_LIMIT)
 def delete_my_account(
     request: Request,
@@ -120,17 +138,22 @@ def delete_my_account(
     current_user: User = Depends(get_current_user_allow_inactive),
     db: Session = Depends(get_db),
 ) -> None:
-    """Twarde usunięcie konta (RODO/Apple): najpierw nasza baza, potem Firebase.
-
-    Gdyby usunięcie w Firebase padło, dane osobowe z naszej bazy są już
-    usunięte, a user przy następnym logowaniu dostanie świeży, pusty profil.
-    """
+    """Twarde usunięcie konta (RODO/Apple) bez okna na odtworzenie profilu."""
     firebase_uid = current_user.firebase_uid
-    user_service.delete_account(db, current_user)
-    delete_firebase_account(firebase_uid)
+    prepare_firebase_account_deletion(firebase_uid)
+    try:
+        user_service.delete_account(db, current_user)
+    except Exception:
+        restore_firebase_account_after_failed_deletion(firebase_uid)
+        raise
+    finalize_firebase_account_deletion(firebase_uid)
 
 
-@users_router.get("/users/{tag}", response_model=UserPublic)
+@users_router.get(
+    "/users/{tag}",
+    response_model=UserPublic,
+    summary="Pobierz publiczny profil usera",
+)
 @limiter.limit(READ_LIMIT)
 def get_user_public_profile(
     request: Request,

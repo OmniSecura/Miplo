@@ -25,6 +25,9 @@ CREATE TABLE IF NOT EXISTS games (
 
     bgg_rank        INTEGER,
     users_rated     INTEGER,
+    miplo_rating    NUMERIC(3,1),
+    miplo_ratings_count INTEGER NOT NULL DEFAULT 0,
+    miplo_reviews_count INTEGER NOT NULL DEFAULT 0,
     is_expansion    BOOLEAN NOT NULL DEFAULT FALSE,
 
     box_width       NUMERIC(5,2),
@@ -59,7 +62,13 @@ CREATE TABLE IF NOT EXISTS games (
         max_players IS NULL OR min_players IS NULL OR max_players >= min_players
     ),
     CONSTRAINT ck_games_rating CHECK (rating IS NULL OR rating BETWEEN 0 AND 10),
-    CONSTRAINT ck_games_weight CHECK (weight IS NULL OR weight BETWEEN 0 AND 5)
+    CONSTRAINT ck_games_weight CHECK (weight IS NULL OR weight BETWEEN 0 AND 5),
+    CONSTRAINT ck_games_miplo_rating CHECK (
+        miplo_rating IS NULL OR miplo_rating BETWEEN 1 AND 10
+    ),
+    CONSTRAINT ck_games_miplo_counts CHECK (
+        miplo_ratings_count >= 0 AND miplo_reviews_count >= 0
+    )
 );
 
 CREATE TABLE IF NOT EXISTS game_game_types (

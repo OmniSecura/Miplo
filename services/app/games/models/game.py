@@ -73,6 +73,14 @@ class Game(Base):
         ),
         CheckConstraint("rating IS NULL OR (rating >= 0 AND rating <= 10)", name="ck_games_rating"),
         CheckConstraint("weight IS NULL OR (weight >= 0 AND weight <= 5)", name="ck_games_weight"),
+        CheckConstraint(
+            "miplo_rating IS NULL OR (miplo_rating >= 1 AND miplo_rating <= 10)",
+            name="ck_games_miplo_rating",
+        ),
+        CheckConstraint(
+            "miplo_ratings_count >= 0 AND miplo_reviews_count >= 0",
+            name="ck_games_miplo_counts",
+        ),
         Index("ix_games_title", "title"),
         Index("ix_games_is_expansion", "is_expansion"),
         Index("ix_games_bgg_rank", "bgg_rank"),
@@ -95,6 +103,14 @@ class Game(Base):
 
     bgg_rank: Mapped[int | None] = mapped_column(Integer)
     users_rated: Mapped[int | None] = mapped_column(Integer)
+    # Agregaty społeczności Miplo. BGG nigdy nie może ich nadpisywać.
+    miplo_rating: Mapped[Decimal | None] = mapped_column(Numeric(3, 1))
+    miplo_ratings_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    miplo_reviews_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     is_expansion: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
@@ -166,6 +182,10 @@ class Game(Base):
         order_by="GameBarcode.language_code",
     )
     shelf_items: Mapped[list["ShelfItem"]] = relationship(  # type: ignore[name-defined]
+        back_populates="game",
+        passive_deletes=True,
+    )
+    ratings: Mapped[list["GameRating"]] = relationship(  # type: ignore[name-defined]
         back_populates="game",
         passive_deletes=True,
     )

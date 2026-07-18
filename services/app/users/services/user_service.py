@@ -140,8 +140,8 @@ def update_avatar_url(db: Session, user: User, avatar_url: str | None) -> User:
 def delete_account(db: Session, user: User) -> None:
     """Twarde usunięcie danych lokalnych (RODO / wymóg Apple).
 
-    Konto po stronie Firebase usuwa core/auth.delete_firebase_account —
-    woła je router, PO usunięciu z naszej bazy.
+    Router przed tą operacją blokuje Firebase i odwołuje sesje, a po udanym
+    commicie finalizuje usunięcie tożsamości Firebase.
     """
     # Avatar z bucketa: padnięcie Storage NIE blokuje usunięcia konta —
     # dane osobowe z bazy są ważniejsze niż osierocony plik (do posprzątania).
@@ -149,9 +149,20 @@ def delete_account(db: Session, user: User) -> None:
         avatar_service.delete_avatar(user.firebase_uid)
     except Exception:
         logger.warning(
-            "Nie udało się usunąć avatara z Storage dla %s — plik osierocony",
-            user.firebase_uid,
+            "Nie udało się usunąć avatara z Storage — plik osierocony",
             exc_info=True,
         )
+    # ON DELETE CASCADE usuwa oceny, ale denormalizowane agregaty gier trzeba
+    # przeliczyć po flushu, inaczej pozostałyby zawyżone po usunięciu konta.
+    from services.app.ratings.models import GameRating
+    from services.app.ratings.services import rating_service
+
+    affected_game_ids = set(
+        db.scalars(
+            select(GameRating.game_id).where(GameRating.user_id == user.id)
+        ).all()
+    )
     db.delete(user)
+    db.flush()
+    rating_service.recalculate_batch(db, affected_game_ids)
     db.commit()

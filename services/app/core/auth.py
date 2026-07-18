@@ -4,6 +4,7 @@ Reszta aplikacji dostaje z get_current_user gotowego, lokalnego Usera z bazy.
 Tożsamość ZAWSZE pochodzi ze zweryfikowanego tokenu — nigdy z payloadu requestu.
 """
 
+import logging
 import secrets
 
 import firebase_admin
@@ -11,6 +12,7 @@ from fastapi import Depends, Request
 from fastapi.security import APIKeyHeader, HTTPAuthorizationCredentials, HTTPBearer
 from firebase_admin import auth as firebase_auth
 from firebase_admin import credentials
+from firebase_admin import exceptions as firebase_exceptions
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
@@ -20,6 +22,8 @@ from services.app.core.errors import ApiError, ErrorCode
 from services.app.users.models import User
 from services.app.users.schemas import UserCreate
 from services.app.users.services import user_service
+
+logger = logging.getLogger(__name__)
 
 # auto_error=False: brak nagłówka obsługujemy sami, bo domyślne zachowanie
 # HTTPBearer to 403 — a brak tokenu to semantycznie 401.
@@ -53,14 +57,28 @@ def get_current_user_allow_inactive(
         raise ApiError.unauthorized()  # brak tokenu → generyczne "unauthorized"
 
     try:
-        decoded = firebase_auth.verify_id_token(bearer.credentials)
+        # check_revoked=True jest kluczowe po wylogowaniu globalnym, blokadzie
+        # lub usunięciu konta. Bez tego poprawnie podpisany token pozostałby
+        # użyteczny aż do naturalnego wygaśnięcia.
+        decoded = firebase_auth.verify_id_token(
+            bearer.credentials,
+            check_revoked=True,
+        )
     except firebase_auth.ExpiredIdTokenError:
         # osobny kod — frontend wie, że wystarczy odświeżyć token przez SDK
         raise ApiError.unauthorized(ErrorCode.TOKEN_EXPIRED)
+    except (
+        firebase_auth.RevokedIdTokenError,
+        firebase_auth.UserDisabledError,
+        firebase_auth.UserNotFoundError,
+    ):
+        raise ApiError.unauthorized(ErrorCode.TOKEN_REVOKED)
     except (firebase_auth.InvalidIdTokenError, ValueError):
-        # InvalidIdTokenError obejmuje też Revoked/UserDisabled;
         # ValueError = token niebędący w ogóle JWT.
         raise ApiError.unauthorized(ErrorCode.INVALID_TOKEN)
+    except firebase_exceptions.FirebaseError:
+        logger.exception("Firebase Auth jest chwilowo niedostępny")
+        raise ApiError(503, ErrorCode.AUTH_PROVIDER_UNAVAILABLE)
 
     firebase_uid: str = decoded["uid"]
 
@@ -143,18 +161,58 @@ def get_admin_access(
 
         # Stabilny, niejawny identyfikator dla rate limitera. Nigdy sam sekret.
         request.state.firebase_uid = "admin-api-key"
+        request.state.admin_actor = "shared-api-key"
         return None
 
     user = get_current_user_allow_inactive(request, bearer, db)
     if not user.is_active:
         raise ApiError.forbidden(ErrorCode.USER_INACTIVE)
-    return get_current_admin(user)
+    admin = get_current_admin(user)
+    request.state.admin_actor = f"user:{admin.tag}"
+    return admin
 
 
-def delete_firebase_account(firebase_uid: str) -> None:
-    """Usuwa konto po stronie Firebase (RODO / wymóg Apple).
+def prepare_firebase_account_deletion(firebase_uid: str) -> None:
+    """Najpierw blokuje konto i unieważnia refresh tokeny.
 
-    Wołane przez router przy DELETE /me — router korzysta z core/auth,
-    ale nadal nie wie, że pod spodem jest Firebase.
+    Dzięki temu żaden istniejący token nie odtworzy lokalnego profilu w oknie
+    między usunięciem danych SQL a finalnym usunięciem konta Firebase.
     """
-    firebase_auth.delete_user(firebase_uid)
+    disabled = False
+    try:
+        firebase_auth.update_user(firebase_uid, disabled=True)
+        disabled = True
+        firebase_auth.revoke_refresh_tokens(firebase_uid)
+    except firebase_auth.UserNotFoundError:
+        return
+    except firebase_exceptions.FirebaseError:
+        logger.exception("Nie udało się przygotować konta Firebase do usunięcia")
+        if disabled:
+            # Nie zostawiamy usera z danymi SQL i przypadkowo zablokowanym
+            # kontem, gdy drugi krok przygotowania zawiódł.
+            restore_firebase_account_after_failed_deletion(firebase_uid)
+        raise ApiError(503, ErrorCode.AUTH_PROVIDER_UNAVAILABLE)
+
+
+def restore_firebase_account_after_failed_deletion(firebase_uid: str) -> None:
+    """Best-effort rollback blokady, jeśli usunięcie danych SQL nie powiodło się."""
+    try:
+        firebase_auth.update_user(firebase_uid, disabled=False)
+    except firebase_auth.UserNotFoundError:
+        return
+    except firebase_exceptions.FirebaseError:
+        logger.exception("Nie udało się cofnąć blokady konta Firebase")
+
+
+def finalize_firebase_account_deletion(firebase_uid: str) -> None:
+    """Finalnie usuwa tożsamość; brak konta jest sukcesem idempotentnym.
+
+    Awaria po trwałym usunięciu SQL jest logowana, ale konto pozostaje disabled,
+    a jego tokeny są odwołane, więc nie może odtworzyć lokalnego użytkownika.
+    """
+    try:
+        firebase_auth.delete_user(firebase_uid)
+    except firebase_auth.UserNotFoundError:
+        return
+    except firebase_exceptions.FirebaseError:
+        logger.exception("Nie udało się finalnie usunąć konta Firebase")
