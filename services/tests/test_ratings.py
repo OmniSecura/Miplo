@@ -302,7 +302,8 @@ class RatingsServiceTests(unittest.TestCase):
         self.assertEqual(self.game.miplo_reviews_count, 2)
         self.assertEqual(self.game.box_width, Decimal("29.50"))
         self.assertEqual(self.game.model_3d_url, "https://storage.example/model.glb")
-        self.assertEqual(self.game.users_rated, 2000)
+        # Rankingowe pola istniejące z CSV nie są cofane przez `/thing`.
+        self.assertEqual(self.game.users_rated, 1000)
 
     def test_stale_bgg_fetch_preserves_miplo_aggregates_end_to_end(self) -> None:
         self._rate(0, "9.0")
@@ -325,7 +326,7 @@ class RatingsServiceTests(unittest.TestCase):
             categories=["Economic"],
         )
         with patch(
-            "services.app.games.services.game_service.bgg_client.fetch_game",
+            "services.app.games.services.game_service.bgg_client.fetch_game_deduped",
             new=AsyncMock(return_value=remote),
         ):
             refreshed = asyncio.run(game_service.get_or_fetch_game(self.db, 224517))

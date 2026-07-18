@@ -100,7 +100,7 @@ Nick jest ograniczony do 50 znaków ASCII `[A-Za-z0-9_]`. Import:
 1. pobiera posiadane gry z kolekcji BGG;
 2. usuwa duplikaty BGG ID;
 3. pobiera brakujące lub stare szczegóły paczkami po maksymalnie 20 ID;
-4. zachowuje 5 sekund odstępu między zewnętrznymi requestami;
+4. korzysta z globalnego throttlingu klienta BGG (minimum 5 sekund);
 5. pomija gry już obecne na półce;
 6. zatwierdza wszystkie nowe wpisy jednym końcowym commitem.
 

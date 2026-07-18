@@ -1,7 +1,10 @@
 """Logika domenowa games: cache BGG, katalog i customowe gry."""
 
 import json
+import logging
 import math
+import threading
+import time
 import unicodedata
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
@@ -14,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from services.app.core import bgg_client
 from services.app.core.config import settings
+from services.app.core.database import db_session
 from services.app.core.errors import ApiError, ErrorCode
 from services.app.games.enums import GameLanguage
 from services.app.games.models import Game, GameBarcode, GameImage, GameType, game_game_types
@@ -34,9 +38,11 @@ from services.app.games.services import cover_service, gallery_service
 from services.app.ratings.constants import MIPLO_MIN_RATINGS_FOR_DISPLAY
 from services.app.users.models import User
 
-# Jedyna lista kolumn, które odpowiedź `/thing` z BGG może nadpisać.
-# Dane Miplo, media community, wymiary i model 3D pozostają nietknięte.
-BGG_UPDATABLE_FIELDS = frozenset(
+logger = logging.getLogger(__name__)
+
+# Szczegóły odświeżane z `/thing` co 30 dni. Wartość None z BGG nie usuwa
+# wcześniej poprawnej wartości lokalnej.
+BGG_STATIC_UPDATABLE_FIELDS = frozenset(
     {
         "title",
         "description",
@@ -44,14 +50,14 @@ BGG_UPDATABLE_FIELDS = frozenset(
         "min_players",
         "max_players",
         "playing_time",
-        "rating",
         "weight",
-        "users_rated",
-        "bgg_rank",
         "cover_url",
-        "cached_at",
     }
 )
+
+# Te pola aktualizuje tygodniowy CSV. API wypełnia je tylko przy pierwszym
+# pobraniu gry spoza seedu, ale nigdy nie nadpisuje wartości już istniejącej.
+BGG_API_FILL_ONLY_FIELDS = frozenset({"rating", "users_rated", "bgg_rank"})
 
 _BGG_CATEGORY_MAP: dict[str, str] = {
     "Economic": "Euro",
@@ -81,6 +87,11 @@ _BGG_CATEGORY_MAP: dict[str, str] = {
     "Sports": "Sportowa",
     "Racing": "Wyścigowa",
 }
+
+_refresh_lock = threading.Lock()
+_refresh_cooldown: dict[int, float] = {}
+_pending_refreshes: dict[int, float] = {}
+_refresh_checks = 0
 
 
 def normalize_slug(value: str) -> str:
@@ -263,6 +274,69 @@ def is_stale(game: Game) -> bool:
     )
 
 
+def should_schedule_refresh(game_id: int) -> bool:
+    """Rezerwuje ograniczony slot na best-effort refresh starej gry.
+
+    Cooldown deduplikuje kolejne wejścia w tę samą grę, a globalna granica
+    pending chroni pamięć procesu przed kolejką utworzoną przez wiele slugów.
+    """
+    global _refresh_checks
+    if game_id < 1 or not settings.BGG_API_TOKEN:
+        return False
+    now = time.monotonic()
+    with _refresh_lock:
+        _refresh_checks += 1
+        if _refresh_checks % 100 == 0:
+            oldest = now - (10 * settings.BGG_REFRESH_COOLDOWN)
+            stale_keys = [key for key, timestamp in _refresh_cooldown.items() if timestamp < oldest]
+            for key in stale_keys:
+                _refresh_cooldown.pop(key, None)
+            abandoned = [key for key, timestamp in _pending_refreshes.items() if timestamp < oldest]
+            for key in abandoned:
+                _pending_refreshes.pop(key, None)
+
+        if game_id in _pending_refreshes:
+            return False
+        if len(_pending_refreshes) >= settings.BGG_MAX_PENDING_REFRESHES:
+            return False
+        last = _refresh_cooldown.get(game_id, 0.0)
+        if now - last < settings.BGG_REFRESH_COOLDOWN:
+            return False
+        _refresh_cooldown[game_id] = now
+        _pending_refreshes[game_id] = now
+        return True
+
+
+def _finish_scheduled_refresh(game_id: int) -> None:
+    with _refresh_lock:
+        _pending_refreshes.pop(game_id, None)
+
+
+def _reset_refresh_state_for_tests() -> None:
+    """Czyści wyłącznie nietrwały debounce procesu."""
+    global _refresh_checks
+    with _refresh_lock:
+        _refresh_cooldown.clear()
+        _pending_refreshes.clear()
+        _refresh_checks = 0
+
+
+async def refresh_game_by_id(game_id: int) -> None:
+    """Odświeża rekord w osobnej sesji; błąd nie psuje publicznej odpowiedzi."""
+    try:
+        with db_session() as db:
+            game = db.get(Game, game_id)
+            if game is None or not is_stale(game):
+                return
+            await get_or_fetch_game(db, game.bgg_id)  # type: ignore[arg-type]
+    except ApiError as exc:
+        logger.warning("BGG background refresh failed game_id=%d code=%s", game_id, exc.detail)
+    except Exception:
+        logger.exception("BGG background refresh failed game_id=%d", game_id)
+    finally:
+        _finish_scheduled_refresh(game_id)
+
+
 async def search_games(db: Session, query: str) -> list[GameSearchResult]:
     sanitized = " ".join(query.strip().split())[:100]
     if len(sanitized) < 2:
@@ -307,7 +381,7 @@ def _apply_bgg_data(
     data: bgg_client.BggGameData,
     game: Game | None = None,
 ) -> Game:
-    types = _resolve_types(db, data.categories, from_bgg=True)
+    types = _resolve_types(db, data.categories, from_bgg=True) if data.categories else None
     if game is None:
         game = Game(
             bgg_id=data.bgg_id,
@@ -317,15 +391,17 @@ def _apply_bgg_data(
         )
         db.add(game)
 
-    bgg_values = {
-        field: getattr(data, field)
-        for field in BGG_UPDATABLE_FIELDS
-        if field != "cached_at"
-    }
-    bgg_values["cached_at"] = datetime.now(timezone.utc)
-    for field in BGG_UPDATABLE_FIELDS:
-        setattr(game, field, bgg_values[field])
-    game.game_types = types
+    for field in BGG_STATIC_UPDATABLE_FIELDS:
+        value = getattr(data, field)
+        if value is not None:
+            setattr(game, field, value)
+    for field in BGG_API_FILL_ONLY_FIELDS:
+        value = getattr(data, field)
+        if getattr(game, field) is None and value is not None:
+            setattr(game, field, value)
+    game.cached_at = datetime.now(timezone.utc)
+    if types is not None:
+        game.game_types = types
     return game
 
 
@@ -334,7 +410,7 @@ async def get_or_fetch_game(db: Session, bgg_id: int) -> Game:
     if game is not None and not is_stale(game):
         return game
 
-    data = await bgg_client.fetch_game(bgg_id)
+    data = await bgg_client.fetch_game_deduped(bgg_id)
     game = _apply_bgg_data(db, data, game)
 
     try:

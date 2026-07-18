@@ -143,7 +143,7 @@ Warstwy obrony, od zewnątrz do środka:
 
 1. **Limit wielkości body** (`core/security/body_limit.py`, czysty ASGI, przed
    routingiem i auth): JSON > 64 KB → `413 payload_too_large`, zwykły multipart
-   > 3 MB → `413`, model 3D > 14 MB → `413`, import katalogu > 35 MB → `413`;
+   > 3 MB → `413`, model 3D > 14 MB → `413`, body importu katalogu > 51 MB → `413`;
    body bez `Content-Length` (chunked) →
    `411 length_required`. Pydantic waliduje dopiero po sparsowaniu całego
    JSON-a — bez tego duży payload najpierw zjadałby RAM.

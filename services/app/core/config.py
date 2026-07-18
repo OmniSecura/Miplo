@@ -11,6 +11,7 @@ ENV steruje wyborem bazy (szczegóły w core/database.py):
 
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -86,18 +87,25 @@ class Settings(BaseSettings):
         max_length=300,
     )
     BGG_API_TOKEN: str | None = None
-    BGG_CACHE_TTL_SECONDS: int = Field(default=86400, ge=60, le=604800)
+    # Szczegóły z /thing są prawie statyczne. Rankingi i liczby głosów
+    # aktualizuje tygodniowy dump CSV, więc API nie musi odświeżać ich codziennie.
+    BGG_CACHE_TTL_SECONDS: int = Field(default=2_592_000, ge=3600, le=31_536_000)
+    BGG_MAX_CONCURRENT: int = Field(default=2, ge=1, le=5)
+    BGG_MIN_REQUEST_INTERVAL: float = Field(default=5.0, ge=0.1, le=60.0)
+    BGG_REFRESH_COOLDOWN: int = Field(default=60, ge=10, le=3600)
+    BGG_MAX_PENDING_REFRESHES: int = Field(default=32, ge=1, le=500)
+
+    # Cloud Run Job / ręcznie uruchamiany nightly sync.
+    NIGHTLY_SYNC_BUDGET: int = Field(default=1800, ge=60, le=21_600)
+    NIGHTLY_SYNC_LEVEL1_LIMIT: int = Field(default=200, ge=1, le=10_000)
+    NIGHTLY_SYNC_LEVEL2_LIMIT: int = Field(default=100, ge=1, le=10_000)
 
     # Generowanie GLB pozostaje wewnątrz requestu (Cloud Run przydziela wtedy CPU),
     # z jawną granicą równoległości i czasu wykonania.
     MODEL_GENERATION_CONCURRENCY: int = Field(default=1, ge=1, le=4)
     MODEL_GENERATION_TIMEOUT_SECONDS: int = Field(default=90, ge=15, le=300)
 
-    # Sekret operatorski do masowego importu katalogu CSV/JSON. To nie jest
-    # zwykła akcja usera i nie może być chroniona wyłącznie tokenem Firebase.
-    GAMES_IMPORT_KEY: str | None = Field(default=None, min_length=32, max_length=256)
-
-    # Uniwersalny sekret operatorski dla endpointów /api/admin/moderation/*.
+    # Uniwersalny sekret operatorski dla endpointów /api/admin/*.
     # Jest alternatywą dla konta Firebase z is_admin=True, nigdy kluczem klienta.
     ADMIN_API_KEY: str | None = Field(default=None, min_length=32, max_length=256)
 
@@ -111,6 +119,16 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _require_db_config_for_env(self) -> "Settings":
+        bgg_url = urlsplit(self.BGG_API_BASE)
+        if (
+            bgg_url.scheme != "https"
+            or (bgg_url.hostname or "").lower() not in {"boardgamegeek.com", "www.boardgamegeek.com"}
+            or bgg_url.username
+            or bgg_url.password
+            or bgg_url.query
+            or bgg_url.fragment
+        ):
+            raise ValueError("BGG_API_BASE musi wskazywać oficjalny host boardgamegeek.com")
         if self.ENV == "dev":
             missing = [
                 name

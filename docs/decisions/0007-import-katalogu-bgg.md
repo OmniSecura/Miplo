@@ -3,6 +3,8 @@
 Data: 2026-07-17  
 Status: przyjęte
 
+> Endpoint, autoryzację, limity i atomowość importu zastępuje ADR 0016.
+
 ## Kontekst
 
 Oficjalny dump rankingu BGG zawiera około 150 tys. rekordów i podstawowe dane,

@@ -63,10 +63,13 @@ struktura endpointów zwykle odrzuca te przypadki wcześniej.
 | `bgg_unavailable` | 502 | timeout, odpowiedź techniczna lub błędny XML BGG |
 | `bgg_rate_limited` | 503 | BGG zwróciło limit |
 | `invalid_bgg_username` | 400 | niepoprawny nick BGG w izolowanym kliencie |
-| `invalid_import_file` | 400 | niepoprawny CSV/JSON |
+| `invalid_csv_format` | 400 | błędny typ, rozszerzenie lub wymagany nagłówek CSV |
+| `csv_too_large` | 413 | plik importu przekracza 50 MB |
+| `import_already_running` | 409 | import działa już w procesie lub innej instancji |
 | `catalog_import_failed` | 500 | awaria importera |
-| `import_not_configured` | 503 | brak `GAMES_IMPORT_KEY` |
-| `invalid_import_key` | 403 | błędny `X-Import-Key` |
+
+`invalid_import_file`, `import_not_configured` i `invalid_import_key` pozostają
+historycznymi kodami kontraktu. Nowy import używa wspólnego auth administratora.
 
 ## Shelf
 

@@ -4,6 +4,8 @@ import asyncio
 import html
 import logging
 import re
+import time
+import weakref
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from urllib.parse import urlsplit
@@ -21,6 +23,47 @@ _TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 _RETRY_DELAYS = (2.0, 4.0, 8.0)
 _MAX_SEARCH_RESULTS = 50
 _MAX_XML_BYTES = 5 * 1024 * 1024
+
+
+@dataclass(slots=True)
+class _RuntimeState:
+    """Stan ograniczeń przypisany do jednej pętli asyncio.
+
+    Osobny stan per loop zapobiega błędom ``bound to a different event loop``
+    w testach i skryptach, które wielokrotnie używają ``asyncio.run``. W jednym
+    procesie uvicorn działa jedna główna pętla, więc limit pozostaje globalny
+    dla wszystkich requestów obsługiwanych przez ten proces.
+    """
+
+    semaphore: asyncio.Semaphore
+    interval_lock: asyncio.Lock
+    in_flight_lock: asyncio.Lock
+    in_flight: dict[int, asyncio.Task["BggGameData"]]
+    last_request_at: float = 0.0
+
+
+_runtime_states: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, _RuntimeState] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _runtime_state() -> _RuntimeState:
+    loop = asyncio.get_running_loop()
+    state = _runtime_states.get(loop)
+    if state is None:
+        state = _RuntimeState(
+            semaphore=asyncio.Semaphore(settings.BGG_MAX_CONCURRENT),
+            interval_lock=asyncio.Lock(),
+            in_flight_lock=asyncio.Lock(),
+            in_flight={},
+        )
+        _runtime_states[loop] = state
+    return state
+
+
+def _reset_runtime_state_for_tests() -> None:
+    """Czyści wyłącznie nietrwały stan procesu; pomocnicze dla testów."""
+    _runtime_states.clear()
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,47 +163,59 @@ def _safe_cover_url(raw: str | None) -> str | None:
     return value[:1000]
 
 
-async def _get_xml(
+async def _request_once(
+    client: httpx.AsyncClient,
+    url: str,
+    params: dict[str, str],
+) -> tuple[int, bytes]:
+    """Wykonuje dokładnie jeden request i czyta wyłącznie poprawne XML-e."""
+    async with client.stream(
+        "GET",
+        url,
+        params=params,
+        headers=_headers(),
+    ) as response:
+        if response.status_code != 200:
+            return response.status_code, b""
+
+        payload = bytearray()
+        async for chunk in response.aiter_bytes():
+            if len(payload) + len(chunk) > _MAX_XML_BYTES:
+                logger.error("BGG XML przekroczył limit %d bajtów", _MAX_XML_BYTES)
+                raise ApiError(502, ErrorCode.BGG_UNAVAILABLE)
+            payload.extend(chunk)
+        return response.status_code, bytes(payload)
+
+
+async def _throttled_request_once(
+    client: httpx.AsyncClient,
+    url: str,
+    params: dict[str, str],
+) -> tuple[int, bytes]:
+    """Ogranicza współbieżność i odstęp każdego fizycznego requestu do BGG."""
+    state = _runtime_state()
+    async with state.semaphore:
+        async with state.interval_lock:
+            elapsed = time.monotonic() - state.last_request_at
+            wait = settings.BGG_MIN_REQUEST_INTERVAL - elapsed
+            if wait > 0:
+                await asyncio.sleep(wait)
+            state.last_request_at = time.monotonic()
+        return await _request_once(client, url, params)
+
+
+async def _throttled_get_xml(
     client: httpx.AsyncClient,
     path: str,
     params: dict[str, str],
     *,
     not_found_code: ErrorCode | None = None,
 ) -> ET.Element:
+    """Pobiera XML z retry; każda próba przechodzi przez globalny throttle."""
     url = f"{settings.BGG_API_BASE.rstrip('/')}/{path.lstrip('/')}"
     for attempt in range(len(_RETRY_DELAYS) + 1):
         try:
-            async with client.stream(
-                "GET",
-                url,
-                params=params,
-                headers=_headers(),
-            ) as response:
-                if response.status_code == 202:
-                    if attempt == len(_RETRY_DELAYS):
-                        break
-                    await asyncio.sleep(_RETRY_DELAYS[attempt])
-                    continue
-                if response.status_code == 429:
-                    logger.warning("BGG odrzucił request limitem 429")
-                    raise ApiError(503, ErrorCode.BGG_RATE_LIMITED)
-                if response.status_code == 404 and not_found_code is not None:
-                    raise ApiError.not_found(not_found_code)
-                if response.status_code >= 400:
-                    logger.warning("BGG odpowiedział %d dla %s", response.status_code, path)
-                    raise ApiError(502, ErrorCode.BGG_UNAVAILABLE)
-                if response.status_code != 200:
-                    # Redirectów celowo nie śledzimy: token Bearer nie może
-                    # zostać wysłany do hosta wskazanego przez odpowiedź.
-                    logger.warning("Nieoczekiwany status BGG %d", response.status_code)
-                    raise ApiError(502, ErrorCode.BGG_UNAVAILABLE)
-
-                payload = bytearray()
-                async for chunk in response.aiter_bytes():
-                    if len(payload) + len(chunk) > _MAX_XML_BYTES:
-                        logger.error("BGG XML przekroczył limit %d bajtów", _MAX_XML_BYTES)
-                        raise ApiError(502, ErrorCode.BGG_UNAVAILABLE)
-                    payload.extend(chunk)
+            status_code, payload = await _throttled_request_once(client, url, params)
         except httpx.TimeoutException:
             # Params mogą zawierać nick kolekcji lub tekst wyszukiwania.
             logger.warning("BGG timeout: %s (attempt %d)", path, attempt + 1)
@@ -172,15 +227,59 @@ async def _get_xml(
             raise
         except httpx.HTTPError:
             logger.exception("Błąd transportu BGG: %s", path)
+            if attempt == len(_RETRY_DELAYS):
+                raise ApiError(502, ErrorCode.BGG_UNAVAILABLE)
+            await asyncio.sleep(_RETRY_DELAYS[attempt])
+            continue
+
+        if status_code == 202:
+            if attempt == len(_RETRY_DELAYS):
+                break
+            await asyncio.sleep(_RETRY_DELAYS[attempt])
+            continue
+        if status_code == 429:
+            logger.warning("BGG odrzucił request limitem 429")
+            raise ApiError(503, ErrorCode.BGG_RATE_LIMITED)
+        if status_code == 404 and not_found_code is not None:
+            raise ApiError.not_found(not_found_code)
+        if status_code >= 500:
+            logger.warning("BGG odpowiedział %d dla %s", status_code, path)
+            if attempt == len(_RETRY_DELAYS):
+                raise ApiError(502, ErrorCode.BGG_UNAVAILABLE)
+            await asyncio.sleep(_RETRY_DELAYS[attempt])
+            continue
+        if status_code >= 400:
+            logger.warning("BGG odpowiedział %d dla %s", status_code, path)
+            raise ApiError(502, ErrorCode.BGG_UNAVAILABLE)
+        if status_code != 200:
+            # Redirectów celowo nie śledzimy: token Bearer nie może zostać
+            # wysłany do hosta wskazanego przez odpowiedź.
+            logger.warning("Nieoczekiwany status BGG %d", status_code)
             raise ApiError(502, ErrorCode.BGG_UNAVAILABLE)
 
         try:
-            return ET.fromstring(bytes(payload))
+            return ET.fromstring(payload)
         except (ET.ParseError, DefusedXmlException):
             logger.warning("BGG zwrócił niepoprawny XML dla %s", path)
             raise ApiError(502, ErrorCode.BGG_UNAVAILABLE)
 
     raise ApiError(502, ErrorCode.BGG_UNAVAILABLE)
+
+
+async def _get_xml(
+    client: httpx.AsyncClient,
+    path: str,
+    params: dict[str, str],
+    *,
+    not_found_code: ErrorCode | None = None,
+) -> ET.Element:
+    """Kompatybilna nazwa wewnętrzna; nie omija throttlingu."""
+    return await _throttled_get_xml(
+        client,
+        path,
+        params,
+        not_found_code=not_found_code,
+    )
 
 
 async def search(query: str) -> list[BggSearchResult]:
@@ -273,6 +372,34 @@ async def fetch_game(bgg_id: int) -> BggGameData:
     if not games:
         raise ApiError.not_found(ErrorCode.GAME_NOT_FOUND)
     return games[0]
+
+
+def _consume_task_exception(task: asyncio.Task[BggGameData]) -> None:
+    """Odbiera wyjątek także wtedy, gdy wszyscy oczekujący zostali anulowani."""
+    if not task.cancelled():
+        task.exception()
+
+
+async def fetch_game_deduped(bgg_id: int) -> BggGameData:
+    """Współdzieli jeden request `/thing` między równoległych odbiorców gry."""
+    if bgg_id < 1:
+        raise ValueError("bgg_id must be positive")
+    state = _runtime_state()
+    async with state.in_flight_lock:
+        task = state.in_flight.get(bgg_id)
+        if task is None:
+            async def fetch_and_cleanup() -> BggGameData:
+                try:
+                    return await fetch_game(bgg_id)
+                finally:
+                    state.in_flight.pop(bgg_id, None)
+
+            task = asyncio.create_task(fetch_and_cleanup())
+            task.add_done_callback(_consume_task_exception)
+            state.in_flight[bgg_id] = task
+
+    # Anulowanie jednego klienta nie anuluje requestu współdzielonego z innymi.
+    return await asyncio.shield(task)
 
 
 async def fetch_collection(username: str) -> list[BggCollectionItem]:

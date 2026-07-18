@@ -9,3 +9,10 @@ class GameLanguage(str, Enum):
     POLISH = "pl"
     ENGLISH = "en"
 
+
+class CatalogImportMode(str, Enum):
+    """Zakres aktualizacji wykonywanej przez operatorski import BGG."""
+
+    UPDATE = "update"
+    FULL = "full"
+

@@ -46,7 +46,14 @@ dlatego `ENV=prod` odrzuca `memory://`, wildcard CORS oraz wildcard hostów.
 |---|---|---|
 | `BGG_API_BASE` | `https://boardgamegeek.com/xmlapi2` | bazowy URL XML API 2, wyłącznie HTTPS |
 | `BGG_API_TOKEN` | brak | Bearer token aplikacji BGG |
-| `BGG_CACHE_TTL_SECONDS` | `86400` | TTL pełnych danych, dozwolone 60–604800 s |
+| `BGG_CACHE_TTL_SECONDS` | `2592000` | TTL szczegółów statycznych (30 dni) |
+| `BGG_MAX_CONCURRENT` | `2` | maks. requesty BGG w locie na proces |
+| `BGG_MIN_REQUEST_INTERVAL` | `5.0` | minimalny odstęp każdego fizycznego requestu |
+| `BGG_REFRESH_COOLDOWN` | `60` | debounce refreshu tej samej gry |
+| `BGG_MAX_PENDING_REFRESHES` | `32` | granica best-effort refreshów na instancję |
+| `NIGHTLY_SYNC_BUDGET` | `1800` | budżet Cloud Run Job w sekundach |
+| `NIGHTLY_SYNC_LEVEL1_LIMIT` | `200` | gry userów bez szczegółów na przebieg |
+| `NIGHTLY_SYNC_LEVEL2_LIMIT` | `100` | stare gry userów na przebieg |
 | `MODEL_GENERATION_CONCURRENCY` | `1` | liczba równoległych generatorów GLB na instancję |
 | `MODEL_GENERATION_TIMEOUT_SECONDS` | `90` | maks. oczekiwanie requestu na wolny slot generatora |
 
@@ -57,12 +64,10 @@ BGG zwracają `503 bgg_not_configured`.
 
 | Zmienna | Endpoint | Reguła |
 |---|---|---|
-| `GAMES_IMPORT_KEY` | `POST /api/games/import` | 32–256 znaków; wymagany razem z Firebase tokenem jako `X-Import-Key` |
-| `ADMIN_API_KEY` | `/api/admin/moderation/*` | 32–256 znaków; alternatywa dla Firebase admina jako `X-Admin-Key` |
+| `ADMIN_API_KEY` | `/api/admin/*` | 32–256 znaków; alternatywa dla Firebase admina jako `X-Admin-Key` |
 
-To dwa różne sekrety. `X-Admin-Key` nie uruchamia importu katalogu, a
-`X-Import-Key` nie daje dostępu do moderacji. Żaden nie może znaleźć się w
-publicznym bundle'u web/mobile.
+Jeden mechanizm obejmuje import i moderację. Klucz nie może znaleźć się w
+publicznym bundle'u web/mobile; operacje są rate-limitowane i trafiają do audit logu.
 
 ## Przykładowe uruchomienie
 

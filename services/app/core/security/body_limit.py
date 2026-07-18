@@ -9,8 +9,9 @@ dostaje 422. Tutaj ucinamy na progu:
   zawsze deklarują długość, a h11 egzekwuje ramkowanie, więc zaniżyć się nie da.
 
 Standardowe progi to 64 KB dla JSON i 3 MB dla multipart (2 MB obrazu oraz
-narzut formularza). Wyłącznie dokładna ścieżka operatorska `/api/games/import`
-ma limit 35 MB, a ścieżki kończące się `/3d-model` mają 14 MB dla sześciu
+narzut formularza). Wyłącznie dokładna ścieżka operatorska
+`/api/admin/games/import` ma limit 51 MB, a ścieżki kończące się `/3d-model`
+mają 14 MB dla sześciu
 obrazów po maksymalnie 2 MB. Spoofing content-type nie podnosi limitu innych
 endpointów.
 
@@ -24,7 +25,8 @@ from services.app.core.errors import ErrorCode
 
 MAX_BODY_SIZE = 64 * 1024
 MAX_MULTIPART_BODY_SIZE = 3 * 1024 * 1024
-MAX_CATALOG_IMPORT_BODY_SIZE = 35 * 1024 * 1024
+# Plik CSV ma limit 50 MB; dodatkowy 1 MB pokrywa bezpiecznie framing multipart.
+MAX_CATALOG_IMPORT_BODY_SIZE = 51 * 1024 * 1024
 MAX_MODEL_UPLOAD_BODY_SIZE = 14 * 1024 * 1024
 
 _METHODS_WITH_BODY = {"POST", "PUT", "PATCH"}
@@ -59,8 +61,10 @@ class BodySizeLimitMiddleware:
 
         # Wyjątek tylko dla operatorskiego importu katalogu. Sprawdzenie dokładnej
         # ścieżki zapobiega podniesieniu limitu dla pozostałych uploadów.
-        if is_multipart and scope.get("path") == "/api/games/import":
+        limit_error = ErrorCode.PAYLOAD_TOO_LARGE
+        if is_multipart and scope.get("path") == "/api/admin/games/import":
             limit = MAX_CATALOG_IMPORT_BODY_SIZE
+            limit_error = ErrorCode.CSV_TOO_LARGE
         elif (
             is_multipart
             and scope.get("path", "").startswith("/api/games/")
@@ -70,7 +74,7 @@ class BodySizeLimitMiddleware:
         else:
             limit = MAX_MULTIPART_BODY_SIZE if is_multipart else self.max_body_size
         if declared > limit:
-            return await self._reject(send, 413, ErrorCode.PAYLOAD_TOO_LARGE)
+            return await self._reject(send, 413, limit_error)
 
         return await self.app(scope, receive, send)
 

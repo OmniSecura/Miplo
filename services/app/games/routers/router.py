@@ -1,15 +1,14 @@
 """Publiczny katalog gier oraz chronione operacje BGG/custom/import."""
 
-import secrets
 from typing import Literal
 from uuid import UUID
 
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     Depends,
     File,
     Form,
-    Header,
     Path,
     Query,
     Request,
@@ -20,13 +19,11 @@ from fastapi import (
 from sqlalchemy.orm import Session
 
 from services.app.core.auth import get_current_user, get_current_user_optional
-from services.app.core.config import settings
 from services.app.core.database import get_db
 from services.app.core.errors import ApiError, ErrorCode
 from services.app.core.security.limiter import (
     BGG_FETCH_LIMIT,
     BGG_SEARCH_LIMIT,
-    CATALOG_IMPORT_LIMIT,
     CUSTOM_GAME_LIMIT,
     DELETE_LIMIT,
     GALLERY_UPLOAD_LIMIT,
@@ -38,7 +35,6 @@ from services.app.core.security.limiter import (
 from services.app.games.schemas import (
     BarcodeAssign,
     BarcodeSubmission,
-    CatalogImportResult,
     GameCreate,
     GameDetail,
     GameListItem,
@@ -50,7 +46,6 @@ from services.app.games.schemas import (
 )
 from services.app.games.services import (
     box_generator_service,
-    catalog_import_service,
     game_service,
 )
 from services.app.users.models import User
@@ -116,29 +111,6 @@ def get_game_by_barcode(
     if game is None:
         raise ApiError.not_found(ErrorCode.BARCODE_NOT_FOUND)
     return game_service.to_list_item(game)
-
-
-@games_router.post(
-    "/games/import",
-    response_model=CatalogImportResult,
-    tags=TAG_BGG_GAMES,
-    summary="Importuj katalog BGG z pliku",
-)
-@limiter.limit(CATALOG_IMPORT_LIMIT)
-def import_games_catalog(
-    request: Request,
-    response: Response,
-    file: UploadFile = File(...),
-    x_import_key: str = Header(..., alias="X-Import-Key", min_length=32, max_length=256),
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> CatalogImportResult:
-    """Operatorski, idempotentny import dumpa BGG CSV/JSON w batchach po 1000."""
-    if not settings.GAMES_IMPORT_KEY:
-        raise ApiError(503, ErrorCode.IMPORT_NOT_CONFIGURED)
-    if not secrets.compare_digest(x_import_key, settings.GAMES_IMPORT_KEY):
-        raise ApiError.forbidden(ErrorCode.INVALID_IMPORT_KEY)
-    return catalog_import_service.import_catalog(db, file)
 
 
 @games_router.get(
@@ -391,6 +363,7 @@ def delete_custom_game(
 def get_game_detail(
     request: Request,
     response: Response,
+    background_tasks: BackgroundTasks,
     slug: str = Path(min_length=1, max_length=200),
     current_user: User | None = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
@@ -401,8 +374,11 @@ def get_game_detail(
         raise ApiError.not_found(ErrorCode.GAME_NOT_FOUND)
     if not game.is_verified:
         raise ApiError.not_found(ErrorCode.GAME_NOT_FOUND)
-    # Publiczny odczyt nie uruchamia pracy po wysłaniu odpowiedzi. Stare dane
-    # odświeża chroniony GET /games/bgg/{bgg_id} albo import katalogu.
+    # Best-effort enrichment jest ściśle ograniczony: jedna gra ma cooldown,
+    # globalna liczba pending jest ograniczona, a każdy request BGG przechodzi
+    # przez deduplikację i throttle. Nightly sync pozostaje ścieżką gwarantowaną.
+    if game_service.is_stale(game) and game_service.should_schedule_refresh(game.id):
+        background_tasks.add_task(game_service.refresh_game_by_id, game.id)
     shelf_item = (
         shelf_service.is_on_shelf(db, current_user.id, game.id)
         if current_user is not None
