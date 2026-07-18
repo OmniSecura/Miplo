@@ -12,6 +12,7 @@ przyjęto konkretne rozwiązania.
 | [`AUTH+USERS.md`](AUTH+USERS.md) | Firebase Auth, lokalny user, profile, bezpieczeństwo wejścia |
 | [`FIREBASE.md`](FIREBASE.md) | konfiguracja Firebase Auth i Firebase Storage               |
 | [`GAMES.md`](GAMES.md) | BGG, custom games, galeria, GLB, barcode i moderacja        |
+| [`SHELF.md`](SHELF.md) | półka usera, wypożyczanie, statystyki i import kolekcji BGG |
 | [`ENDPOINTS.md`](ENDPOINTS.md) | pełny katalog aktualnych endpointów HTTP                    |
 | [`DEMO-FRONTEND.md`](DEMO-FRONTEND.md) | gotowy brief dla do zbudowania demo frontendu  |
 | [`CONFIGURATION.md`](CONFIGURATION.md) | zmienne środowiskowe i zachowanie local/dev/prod            |
@@ -22,12 +23,10 @@ przyjęto konkretne rozwiązania.
 
 - `users`: find-or-create po Firebase UID, profil, avatar, soft delete i RODO;
 - `games`: katalog BGG, operatorski import dumpa, custom games i typy many-to-many;
+- `shelf`: prywatna półka, publiczne oferty wypożyczenia, statystyki i import BGG;
 - community: moderowane okładki, galeria, modele pudełek GLB i barcode per język;
 - administracja: Firebase user z `is_admin=true` albo operatorski `X-Admin-Key`;
-- przyszłe domeny: shelf, matchmaking i venues.
-
-Nie istnieje endpoint importu kolekcji BGG. Został odłożony do czasu modułu shelf
-i trwałego systemu zadań.
+- przyszłe domeny: ratings, matchmaking i venues.
 
 ## Uruchomienie lokalne
 
@@ -52,7 +51,8 @@ dla lokalnego developmentu. Nie zastępuje migracji istniejącego schematu.
   1. `database/sql/migrations/0002_game_media_moderation.sql`,
   2. `database/sql/migrations/0003_game_barcodes.sql`,
   3. `database/sql/migrations/0004_game_language_enum.sql`,
-  4. `database/sql/migrations/0005_exact_barcode_formats.sql`.
+  4. `database/sql/migrations/0005_exact_barcode_formats.sql`,
+  5. `database/sql/migrations/0006_shelf_items.sql`.
 
 Docelowo produkcyjne migracje powinny zostać przeniesione do Alembic.
 
@@ -69,7 +69,8 @@ Docelowo produkcyjne migracje powinny zostać przeniesione do Alembic.
 ## Weryfikacja
 
 ```powershell
-services\.venv\Scripts\python.exe -B -m unittest services.tests.test_games -v
+services\.venv\Scripts\python.exe -B -m unittest discover -s services/tests -v
 ```
 
-Aktualny zestaw modułu games obejmuje 29 testów bez połączeń z BGG i Firebase.
+Aktualny zestaw obejmuje 42 testy (30 `games`, 12 `shelf`) bez połączeń z BGG
+i Firebase.

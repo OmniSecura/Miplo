@@ -102,7 +102,13 @@ def _clean_description(raw: str | None) -> str | None:
     return text[:5000] or None
 
 
-async def _get_xml(client: httpx.AsyncClient, path: str, params: dict[str, str]) -> ET.Element:
+async def _get_xml(
+    client: httpx.AsyncClient,
+    path: str,
+    params: dict[str, str],
+    *,
+    not_found_code: ErrorCode | None = None,
+) -> ET.Element:
     url = f"{settings.BGG_API_BASE.rstrip('/')}/{path.lstrip('/')}"
     for attempt in range(len(_RETRY_DELAYS) + 1):
         try:
@@ -125,6 +131,8 @@ async def _get_xml(client: httpx.AsyncClient, path: str, params: dict[str, str])
         if response.status_code == 429:
             logger.warning("BGG odrzucił request limitem 429")
             raise ApiError(503, ErrorCode.BGG_RATE_LIMITED)
+        if response.status_code == 404 and not_found_code is not None:
+            raise ApiError.not_found(not_found_code)
         if response.status_code >= 400:
             logger.warning("BGG odpowiedział %d dla %s", response.status_code, path)
             raise ApiError(502, ErrorCode.BGG_UNAVAILABLE)
@@ -163,17 +171,14 @@ async def search(query: str) -> list[BggSearchResult]:
     return result
 
 
-async def fetch_game(bgg_id: int) -> BggGameData:
-    _require_token()
-    async with httpx.AsyncClient(timeout=_TIMEOUT, follow_redirects=False) as client:
-        root = await _get_xml(client, "thing", {"id": str(bgg_id), "stats": "1"})
-
-    item = root.find(".//item")
-    if item is None:
-        raise ApiError.not_found(ErrorCode.GAME_NOT_FOUND)
+def _parse_game_item(item: ET.Element) -> BggGameData | None:
+    try:
+        bgg_id = int(item.get("id", ""))
+    except ValueError:
+        return None
     title = _primary_name(item)
     if not title:
-        raise ApiError(502, ErrorCode.BGG_UNAVAILABLE)
+        return None
 
     description_element = item.find("description")
     image_element = item.find("image")
@@ -205,18 +210,48 @@ async def fetch_game(bgg_id: int) -> BggGameData:
     )
 
 
-async def fetch_collection(username: str) -> list[BggCollectionItem]:
-    """Pozostaje funkcją integracyjną; publiczny endpoint importu usunięto."""
+async def fetch_games(bgg_ids: list[int]) -> list[BggGameData]:
+    """Pobiera maksymalnie 20 gier jednym requestem `/thing`."""
     _require_token()
-    sanitized = re.sub(r"[^\w\-.]", "", username.strip())[:50]
-    if not sanitized:
+    unique_ids = list(dict.fromkeys(bgg_ids))
+    if not unique_ids or len(unique_ids) > 20 or any(item_id < 1 for item_id in unique_ids):
+        raise ValueError("fetch_games accepts from 1 to 20 positive BGG IDs")
+    async with httpx.AsyncClient(timeout=_TIMEOUT, follow_redirects=False) as client:
+        root = await _get_xml(
+            client,
+            "thing",
+            {"id": ",".join(str(item_id) for item_id in unique_ids), "stats": "1"},
+        )
+    parsed = (_parse_game_item(item) for item in root.findall(".//item"))
+    return [item for item in parsed if item is not None]
+
+
+async def fetch_game(bgg_id: int) -> BggGameData:
+    games = await fetch_games([bgg_id])
+    if not games:
+        raise ApiError.not_found(ErrorCode.GAME_NOT_FOUND)
+    return games[0]
+
+
+async def fetch_collection(username: str) -> list[BggCollectionItem]:
+    """Pobiera posiadane gry; błędny nick odróżnia od pustej kolekcji."""
+    sanitized = username.strip()
+    # Nie naprawiamy ani nie obcinamy nicku, bo mogłoby to pobrać kolekcję
+    # innego usera (np. "anna!" -> "anna"). Schemat endpointu sprawdza to samo,
+    # a klient powtarza walidację jako defense in depth.
+    if re.fullmatch(r"[a-zA-Z0-9_]{1,50}", sanitized) is None:
         raise ApiError.bad_request(ErrorCode.INVALID_BGG_USERNAME)
+    _require_token()
     async with httpx.AsyncClient(timeout=_TIMEOUT, follow_redirects=False) as client:
         root = await _get_xml(
             client,
             "collection",
             {"username": sanitized, "own": "1", "subtype": "boardgame"},
+            not_found_code=ErrorCode.INVALID_BGG_USERNAME,
         )
+
+    if root.find(".//error") is not None or root.tag == "errors":
+        raise ApiError.not_found(ErrorCode.INVALID_BGG_USERNAME)
 
     result: list[BggCollectionItem] = []
     for item in root.findall(".//item"):

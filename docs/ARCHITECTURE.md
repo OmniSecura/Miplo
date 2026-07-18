@@ -17,7 +17,7 @@ FastAPI / Cloud Run
         ├── core       — config, baza, auth, BGG, limity, błędy
         ├── users      — lokalny profil i avatar
         ├── games      — katalog BGG, import dumpa i customowe gry
-        ├── shelf      — półka usera                         [przyszły ticket]
+        ├── shelf      — półka usera, wypożyczanie i import kolekcji BGG
         ├── matchmaking                                      [przyszły ticket]
         └── venues                                            [przyszły ticket]
         │
@@ -55,9 +55,10 @@ można załadować operatorskim endpointem CSV/JSON. Rekord z dumpa ma
 Redis nie uczestniczy obecnie w cache katalogu. Można go dodać później jako
 krótkotrwały cache odpowiedzi, ale źródłem prawdy pozostaje PostgreSQL.
 
-Publicznego importu kolekcji BGG nie ma. Został celowo usunięty do czasu modułu
-`shelf` i trwałego systemu zadań; długa operacja nie powinna działać jako zwykły
-request ani nietrwały `BackgroundTasks`.
+Import kolekcji BGG należy do modułu `shelf`. Na MVP działa synchronicznie z
+budżetem 180 sekund, pobiera szczegóły paczkami po 20 ID i zwraca częściowy wynik
+po timeout. Jest objęty limitem `2/hour`. Docelowo trwała kolejka może zastąpić
+długi request bez zmiany modelu półki.
 
 Wymagana atrybucja BGG jest zwracana przez `/health`; frontend powinien pokazać
 „Powered by BoardGameGeek data” z linkiem do `https://boardgamegeek.com`.
@@ -81,6 +82,18 @@ otworzyć dalsze kontrybucje do konkretnej gry. Barcode ma osobną tabelę i dok
 jeden zatwierdzony rekord na język gry. Klucz operatorski nigdy nie trafia do
 publicznego frontendu.
 
+## Półka usera
+
+`shelf_items` jest relacją user–gra i przechowuje dane konkretnego egzemplarza:
+stan, wypożyczalność, kaucję, warunki i prywatną notatkę. Operacje właścicielskie
+są zawsze zawężane przez `current_user.id`. Publiczny widok po `tag` nie zwraca
+prywatnej notatki ani warunków, jeśli gra nie jest wystawiona do wypożyczenia.
+
+Listy używają jawnego JOIN-u do `games` i wyłączają pozostałe eager-relacje gry,
+więc liczba zapytań nie rośnie wraz z liczbą pozycji. `GET /api/games/{slug}` ma
+opcjonalny auth i może dołączyć kontekst własnej półki bez dodatkowego roundtripu.
+Niepoprawny token nadal daje `401`; tylko całkowity brak nagłówka oznacza gościa.
+
 ## Środowiska bazy
 
 - `ENV=local` — SQLite i automatyczne `create_all`, wyłącznie do szybkiego dev.
@@ -90,7 +103,8 @@ publicznego frontendu.
 `create_all` nie jest systemem migracji. Zmiany istniejącej bazy PostgreSQL należy
 wdrażać Alembikiem lub kontrolowanym SQL-em z `database/sql/`. Aktualna kolejność
 to `0002_game_media_moderation.sql`, następnie `0003_game_barcodes.sql`.
-Po nich stosujemy `0004_game_language_enum.sql`, ograniczając wersje do `pl/en`.
+Po nich stosujemy `0004_game_language_enum.sql`, `0005_exact_barcode_formats.sql`
+i `0006_shelf_items.sql`.
 
 ## Powiązane decyzje
 

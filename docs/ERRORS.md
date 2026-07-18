@@ -58,8 +58,19 @@ struktura endpointów zwykle odrzuca te przypadki wcześniej.
 | `import_not_configured` | 503 | brak `GAMES_IMPORT_KEY` |
 | `invalid_import_key` | 403 | błędny `X-Import-Key` |
 
-`collection_import_failed` jest zachowany dla przyszłego modułu shelf; endpoint
-importu kolekcji obecnie nie istnieje.
+## Shelf
+
+| Kod | Typowy status | Znaczenie |
+|---|---:|---|
+| `game_already_on_shelf` | 409 | user ma już tę grę na półce lub wystąpił wyścig zapisu |
+| `game_not_on_shelf` | 404 | wskazana gra nie znajduje się na półce aktualnego usera |
+| `collection_import_failed` | 502 | nieoczekiwana awaria importu kolekcji BGG |
+| `ratings_not_available` | 501 | domena ocen nie istnieje; import/sort ocen Miplo jest odroczony |
+
+`collection_import_timeout` jest zarezerwowany w enumie, ale obecny kontrakt nie
+kończy timeoutu błędem: po 180 sekundach zwraca częściowy `CollectionImportResult`
+z nieprzetworzonymi grami doliczonymi do `failed`. `invalid_condition` pozostaje
+kodem zarezerwowanym; niepoprawna wartość enumu jest obecnie standardowym `422`.
 
 ## Barcode
 

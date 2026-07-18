@@ -20,6 +20,7 @@ from pydantic import (
 )
 
 from services.app.games.enums import GameLanguage
+from services.app.shelf.schemas import ShelfItemResponse
 
 
 _BIDI_CONTROLS = frozenset("\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069")
@@ -290,6 +291,8 @@ class GameDetail(GameListItem):
     created_at: datetime
     community_contributions_enabled: bool
     images: list[GameImagePublic] = Field(default_factory=list)
+    on_my_shelf: bool = False
+    my_shelf_item: ShelfItemResponse | None = None
 
 
 class PaginatedGames(BaseModel):

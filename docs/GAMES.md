@@ -6,8 +6,9 @@ Moduł `games` łączy trzy źródła danych w jednym katalogu:
 2. masowy, operatorski import rankingu BGG z CSV/JSON,
 3. gry customowe dodawane przez społeczność.
 
-Półka usera pozostaje poza tym zakresem. Publiczny endpoint importu kolekcji BGG
-po nicku został świadomie usunięty.
+Półka usera pozostaje osobną domeną opisaną w [`SHELF.md`](SHELF.md). Moduł
+`games` udostępnia jej batchowe pobieranie szczegółów BGG i opcjonalny kontekst
+półki w `GameDetail`.
 
 ## Struktura
 
@@ -48,6 +49,10 @@ zwracany od razu i odświeżany best-effort w tle z nową sesją bazy.
 
 Brak `BGG_API_TOKEN` nie blokuje startu. Katalog, slug i barcode działają,
 a operacje wymagające BGG zwracają `503 bgg_not_configured`.
+
+Klient udostępnia także `fetch_games()` dla maksymalnie 20 BGG ID w jednym
+`/thing?id=...&stats=1`. Korzysta z niego import kolekcji w domenie `shelf`, aby
+200 gier nie oznaczało 200 requestów do BGG.
 
 ### Warunki korzystania z BGG
 
@@ -266,6 +271,7 @@ kopię pliku SQLite. Na dev/prod zastosuj migrację
 `database/sql/migrations/0003_game_barcodes.sql` i
 `database/sql/migrations/0004_game_language_enum.sql` oraz
 `database/sql/migrations/0005_exact_barcode_formats.sql` (docelowo Alembic).
+Tabela półki jest dodawana później przez `0006_shelf_items.sql`.
 
 ## Testy
 
@@ -273,7 +279,7 @@ kopię pliku SQLite. Na dev/prod zastosuj migrację
 services\.venv\Scripts\python.exe -B -m unittest services.tests.test_games -v
 ```
 
-Testy nie łączą się z BGG ani Firebase. Aktualne 29 przypadków pokrywa import
+Testy nie łączą się z BGG ani Firebase. Aktualne 30 przypadków pokrywa import
 idempotentny, filtrowanie, ownership, prywatną galerię, rolę admina, blokadę
 kontrybucji, moderację modelu, barcode per język i jego atomową podmianę,
 strukturę binarną GLB, retry BGG oraz walidację obrazów.

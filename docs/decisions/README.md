@@ -17,4 +17,5 @@ po cichu; istotna zmiana powinna dostać kolejny numer albo jawne uzupełnienie.
 | [`0010`](0010-dwuczesciowy-glb-bez-csg.md) | dwuczęściowy GLB generowany bez CSG/trimesh | przyjęte |
 | [`0011`](0011-dwutorowy-dostep-administratorski.md) | admin Firebase albo uniwersalny klucz operatorski | przyjęte |
 | [`0012`](0012-barcode-per-wersja-jezykowa.md) | jeden zatwierdzony barcode na wersję językową | przyjęte |
+| [`0013`](0013-user-shelf-and-bgg-import.md) | osobna półka usera i synchroniczny import kolekcji BGG na MVP | przyjęte |
 
