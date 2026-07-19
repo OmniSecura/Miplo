@@ -1,6 +1,6 @@
 # 0012 — Jeden moderowany barcode na wersję językową gry
 
-Data: 2026-07-18  
+Data: 2026-07-18
 Status: przyjęte
 
 ## Kontekst

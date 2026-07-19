@@ -1,7 +1,8 @@
 """Operacje bazodanowe ocen, agregaty, import i moderacja recenzji."""
 
 import math
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal
+from typing import cast as type_cast
 from uuid import UUID
 
 from sqlalchemy import Numeric, case, cast, func, select, update
@@ -12,7 +13,7 @@ from services.app.core.errors import ApiError, ErrorCode
 from services.app.games.models import Game
 from services.app.games.services import game_service
 from services.app.ratings.constants import MIPLO_MIN_RATINGS_FOR_DISPLAY
-from services.app.ratings.enums import RatingSort, RatingSource
+from services.app.ratings.enums import RatingSort, RatingSource, ReviewReportReason
 from services.app.ratings.models import GameRating, ReviewReport
 from services.app.ratings.schemas import (
     GameRatingsSummary,
@@ -73,7 +74,7 @@ def to_response(item: GameRating) -> RatingResponse:
         rating=item.rating,
         review=item.review,
         contains_spoilers=item.contains_spoilers,
-        source=item.source,
+        source=RatingSource(item.source),
         created_at=item.created_at,
         updated_at=item.updated_at,
         author=RatingAuthor(
@@ -93,7 +94,7 @@ def to_my_response(item: GameRating) -> MyRatingResponse:
         rating=item.rating,
         review=item.review,
         contains_spoilers=item.contains_spoilers,
-        source=item.source,
+        source=RatingSource(item.source),
         is_hidden=item.is_hidden,
         created_at=item.created_at,
         updated_at=item.updated_at,
@@ -101,11 +102,14 @@ def to_my_response(item: GameRating) -> MyRatingResponse:
 
 
 def _get_user_rating(db: Session, user_id: int, game_id: int) -> GameRating | None:
-    return db.scalar(
-        _rating_query().where(
-            GameRating.user_id == user_id,
-            GameRating.game_id == game_id,
-        )
+    return type_cast(
+        GameRating | None,
+        db.scalar(
+            _rating_query().where(
+                GameRating.user_id == user_id,
+                GameRating.game_id == game_id,
+            )
+        ),
     )
 
 
@@ -141,12 +145,8 @@ def recalculate_batch(db: Session, game_ids: set[int]) -> None:
         GameRating.game_id == Game.id,
         GameRating.is_hidden.is_(False),
     )
-    average = (
-        select(func.avg(GameRating.rating)).where(*visible).scalar_subquery()
-    )
-    ratings_count = (
-        select(func.count(GameRating.id)).where(*visible).scalar_subquery()
-    )
+    average = select(func.avg(GameRating.rating)).where(*visible).scalar_subquery()
+    ratings_count = select(func.count(GameRating.id)).where(*visible).scalar_subquery()
     reviews_count = (
         select(func.count(GameRating.id))
         .where(*visible, GameRating.review.is_not(None))
@@ -268,9 +268,9 @@ def get_game_ratings(
         min_rating=min_rating,
         max_rating=max_rating,
     )
-    items = db.scalars(
-        _apply_sort(query, sort).offset((page - 1) * size).limit(size)
-    ).unique().all()
+    items = (
+        db.scalars(_apply_sort(query, sort).offset((page - 1) * size).limit(size)).unique().all()
+    )
     return PaginatedRatings(
         items=[to_response(item) for item in items],
         total=total,
@@ -303,9 +303,9 @@ def get_my_ratings(
         min_rating=None,
         max_rating=None,
     )
-    items = db.scalars(
-        _apply_sort(query, sort).offset((page - 1) * size).limit(size)
-    ).unique().all()
+    items = (
+        db.scalars(_apply_sort(query, sort).offset((page - 1) * size).limit(size)).unique().all()
+    )
     return PaginatedMyRatings(
         items=[to_my_response(item) for item in items],
         total=total,
@@ -341,9 +341,9 @@ def get_user_ratings(
         min_rating=None,
         max_rating=None,
     )
-    items = db.scalars(
-        _apply_sort(query, sort).offset((page - 1) * size).limit(size)
-    ).unique().all()
+    items = (
+        db.scalars(_apply_sort(query, sort).offset((page - 1) * size).limit(size)).unique().all()
+    )
     return PaginatedRatings(
         items=[to_response(item) for item in items],
         total=total,
@@ -409,8 +409,7 @@ def get_ratings_summary(
     combined = None
     if game.rating is not None and bgg_count > 0 and public_miplo is not None:
         combined = _round(
-            (game.rating * bgg_count + public_miplo * miplo_count)
-            / (bgg_count + miplo_count),
+            (game.rating * bgg_count + public_miplo * miplo_count) / (bgg_count + miplo_count),
             "0.01",
         )
     elif game.rating is not None and bgg_count > 0:
@@ -443,9 +442,7 @@ def get_ratings_summary(
 def _normalize_import_rating(value: Decimal) -> Decimal | None:
     if value < 1 or value > 10:
         return None
-    return ((value * 2).quantize(Decimal("1"), rounding=ROUND_HALF_UP) / 2).quantize(
-        Decimal("0.1")
-    )
+    return ((value * 2).quantize(Decimal("1"), rounding=ROUND_HALF_UP) / 2).quantize(Decimal("0.1"))
 
 
 def import_from_bgg(
@@ -456,14 +453,18 @@ def import_from_bgg(
     commit: bool = True,
 ) -> int:
     game_ids = {game_id for game_id, _ in ratings}
-    existing = set(
-        db.scalars(
-            select(GameRating.game_id).where(
-                GameRating.user_id == user_id,
-                GameRating.game_id.in_(game_ids),
-            )
-        ).all()
-    ) if game_ids else set()
+    existing = (
+        set(
+            db.scalars(
+                select(GameRating.game_id).where(
+                    GameRating.user_id == user_id,
+                    GameRating.game_id.in_(game_ids),
+                )
+            ).all()
+        )
+        if game_ids
+        else set()
+    )
     imported = 0
     affected: set[int] = set()
     for game_id, raw_rating in dict(ratings).items():
@@ -539,17 +540,21 @@ def list_reported_reviews(db: Session, limit: int) -> list[ReportedReviewModerat
         .correlate(GameRating)
         .scalar_subquery()
     )
-    ratings = db.scalars(
-        select(GameRating)
-        .where(report_count > 0, GameRating.review.is_not(None))
-        .options(
-            joinedload(GameRating.author),
-            joinedload(GameRating.game),
-            selectinload(GameRating.reports).joinedload(ReviewReport.reporter),
+    ratings = (
+        db.scalars(
+            select(GameRating)
+            .where(report_count > 0, GameRating.review.is_not(None))
+            .options(
+                joinedload(GameRating.author),
+                joinedload(GameRating.game),
+                selectinload(GameRating.reports).joinedload(ReviewReport.reporter),
+            )
+            .order_by(report_count.desc(), GameRating.created_at.asc())
+            .limit(limit)
         )
-        .order_by(report_count.desc(), GameRating.created_at.asc())
-        .limit(limit)
-    ).unique().all()
+        .unique()
+        .all()
+    )
     result: list[ReportedReviewModeration] = []
     for rating in ratings:
         reports = [report for report in rating.reports if not report.resolved]
@@ -569,7 +574,7 @@ def list_reported_reviews(db: Session, limit: int) -> list[ReportedReviewModerat
                 report_count=len(reports),
                 reports=[
                     ReviewReportItem(
-                        reason=report.reason,
+                        reason=ReviewReportReason(report.reason),
                         details=report.details,
                         reporter_tag=report.reporter.tag,
                         created_at=report.created_at,

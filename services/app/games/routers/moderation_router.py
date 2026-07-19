@@ -11,8 +11,8 @@ from services.app.core.security.limiter import MODERATION_LIMIT, limiter
 from services.app.games.schemas import (
     GameDetail,
     PendingBarcodeModeration,
-    PendingImageModeration,
     PendingGameModeration,
+    PendingImageModeration,
     PendingModelModeration,
 )
 from services.app.games.services import moderation_service

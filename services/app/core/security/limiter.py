@@ -14,6 +14,8 @@ i `response: Response` (do wstrzyknięcia nagłówków X-RateLimit-*) — bez
 Rejestracja w aplikacji: register_rate_limiting(app) w create_app() (server.py).
 """
 
+from typing import cast
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from slowapi import Limiter
@@ -29,20 +31,20 @@ from services.app.core.errors import ErrorCode
 # w FastAPI ≥0.139 (nowy routing `_IncludedRouter`) — sprawdzone empirycznie,
 # limit z middleware po prostu nie działał. Egzekwują wyłącznie dekoratory.
 
-READ_LIMIT = "60/minute"      # odczyty (GET)
+READ_LIMIT = "60/minute"  # odczyty (GET)
 BGG_SEARCH_LIMIT = "10/minute"  # publiczny endpoint może wywołać zewnętrzne BGG
-BGG_FETCH_LIMIT = "30/hour"      # klik wyniku może odświeżyć zewnętrzne BGG
-WRITE_LIMIT = "20/minute"     # zapisy (PUT/POST)
-UPLOAD_LIMIT = "5/minute"     # upload plików (CPU na optymalizację + transfer)
-DELETE_LIMIT = "5/hour"       # operacje destrukcyjne (DELETE /me)
+BGG_FETCH_LIMIT = "30/hour"  # klik wyniku może odświeżyć zewnętrzne BGG
+WRITE_LIMIT = "20/minute"  # zapisy (PUT/POST)
+UPLOAD_LIMIT = "5/minute"  # upload plików (CPU na optymalizację + transfer)
+DELETE_LIMIT = "5/hour"  # operacje destrukcyjne (DELETE /me)
 CUSTOM_GAME_LIMIT = "5/hour"  # community content / ochrona przed spamem
-CATALOG_IMPORT_LIMIT = "2/day"  # ciężki, operatorski import pełnego dumpa CSV
+CATALOG_IMPORT_LIMIT = "20/day"  # ciężki, operatorski import pełnego dumpa CSV
 GALLERY_UPLOAD_LIMIT = "10/hour"  # zdjęcia wnętrza customowej gry
-MODEL_UPLOAD_LIMIT = "3/hour"     # sześć tekstur + generowanie GLB
-MODERATION_LIMIT = "60/minute"    # chronione operacje administratora
+MODEL_UPLOAD_LIMIT = "3/hour"  # sześć tekstur + generowanie GLB
+MODERATION_LIMIT = "60/minute"  # chronione operacje administratora
 COLLECTION_IMPORT_LIMIT = "2/hour"  # BGG collection: kosztowne requesty batch
-RATING_WRITE_LIMIT = "20/hour"      # ochrona przed masowym ocenianiem
-REVIEW_REPORT_LIMIT = "10/hour"     # ochrona przed masowym zgłaszaniem
+RATING_WRITE_LIMIT = "20/hour"  # ochrona przed masowym ocenianiem
+REVIEW_REPORT_LIMIT = "10/hour"  # ochrona przed masowym zgłaszaniem
 
 
 def _key_func(request: Request) -> str:
@@ -69,7 +71,10 @@ def _rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONRespons
         content={"detail": {"error_code": ErrorCode.RATE_LIMIT_EXCEEDED.value}},
     )
     # dokłada Retry-After i X-RateLimit-* wyliczone dla przekroczonego limitu
-    return request.app.state.limiter._inject_headers(response, request.state.view_rate_limit)
+    return cast(
+        JSONResponse,
+        request.app.state.limiter._inject_headers(response, request.state.view_rate_limit),
+    )
 
 
 def register_rate_limiting(app: FastAPI) -> None:
@@ -79,4 +84,4 @@ def register_rate_limiting(app: FastAPI) -> None:
     middleware slowapi celowo NIE jest używany (patrz komentarz wyżej).
     """
     app.state.limiter = limiter
-    app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)  # type: ignore[arg-type]

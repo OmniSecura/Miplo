@@ -22,6 +22,85 @@ dependencies = [
     "python-slugify",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "bandit>=1.8.0",
+    "mypy>=1.13.0",
+    "pip-audit>=2.7.0",
+    "pre-commit>=4.0.0",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "respx>=0.21.0",
+    "ruff>=0.8.0",
+]
+
 [build-system]
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [
+    "alembic/versions",
+    "scripts/data",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "W",
+    "F",
+    "I",
+    "B",
+    "C4",
+    "UP",
+    "S",
+    "ASYNC",
+    "T20",
+]
+ignore = [
+    "E501",
+    "B008",
+    # Istniejący kod mapuje wyjątki bibliotek na stabilne ApiError. Dodanie
+    # `from exc` jest osobnym refaktorem kontraktu/logowania, nie częścią CI.
+    "B904",
+    "S101",
+    # Migracja do datetime.UTC, StrEnum i niecytowanych forward refs nie wnosi
+    # wartości do pipeline'u i mogłaby zmienić zachowanie ORM/Pydantic.
+    "UP017",
+    "UP037",
+    "UP042",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101", "S105", "S106", "S314"]
+"scripts/**/*.py" = ["E402", "S608", "T20"]
+"app/core/errors.py" = ["S105"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["services"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+disable_error_code = ["import-untyped"]
+plugins = ["pydantic.mypy"]
+disallow_untyped_defs = false
+check_untyped_defs = true
+exclude = ["scripts/data"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-ra --strict-markers"
+markers = [
+    "integration: testy wymagające PostgreSQL lub Redis",
+    "bgg: testy klienta BGG; zawsze używają mocków HTTP",
+]

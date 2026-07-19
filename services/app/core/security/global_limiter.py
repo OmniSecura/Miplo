@@ -18,6 +18,7 @@ from services.app.core.errors import ErrorCode
 
 logger = logging.getLogger(__name__)
 
+
 class GlobalIpRateLimitMiddleware:
     """Cienki middleware ASGI; nie ufa nagłówkom X-Forwarded-For klienta."""
 
@@ -62,7 +63,9 @@ class GlobalIpRateLimitMiddleware:
         return allowed, reset_at
 
 
-async def _send_error(send, status_code: int, code: ErrorCode, retry_after: int | None = None) -> None:
+async def _send_error(
+    send, status_code: int, code: ErrorCode, retry_after: int | None = None
+) -> None:
     import json
 
     body = json.dumps(

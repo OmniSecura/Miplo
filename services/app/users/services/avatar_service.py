@@ -64,7 +64,7 @@ def _optimize_to_webp(data: bytes) -> bytes:
     try:
         # Image.open czyta tylko nagłówek — wymiary znamy BEZ dekodowania,
         # więc bombę pikselową odrzucamy zanim zaalokuje RAM.
-        img = Image.open(io.BytesIO(data))
+        img: Image.Image = Image.open(io.BytesIO(data))
         width, height = img.size
         if width * height > MAX_IMAGE_PIXELS:
             raise ApiError.bad_request(

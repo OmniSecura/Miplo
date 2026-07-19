@@ -34,7 +34,7 @@ Firebase Auth i bucket są inicjalizowane fail-fast w lifespanie aplikacji.
 |---|---|---|
 | `ALLOWED_ORIGINS` | localhost:3000 i localhost:4173 | lista originów CORS rozdzielona przecinkami |
 | `ALLOWED_HOSTS` | localhost, 127.0.0.1, testserver | jawna allowlista nagłówka Host |
-| `RATE_LIMIT_STORAGE_URI` | `memory://` | backend limiterów; na prod wymagany Redis/Rediss |
+| `RATE_LIMIT_STORAGE_URI` | `memory://` | liczniki globalnego i endpointowego rate limitingu; Compose ustawia `redis://redis:6379/1`, a prod wymaga Redis/Rediss |
 | `GLOBAL_IP_RATE_LIMIT` | `120/minute` | limit przed routingiem, auth i walidacją |
 
 Pamięciowy limiter nie synchronizuje liczników między instancjami Cloud Run,
@@ -77,4 +77,3 @@ services\.venv\Scripts\uvicorn.exe services.app.server:app --reload
 
 Konfigurację należy sprawdzać przez start aplikacji, nie przez endpoint zwracający
 sekrety — takiego endpointu celowo nie ma.
-

@@ -1,6 +1,6 @@
 # 0011 — Firebase admin lub uniwersalny klucz operatorski
 
-Data: 2026-07-17  
+Data: 2026-07-17
 Status: przyjęte
 
 ## Kontekst

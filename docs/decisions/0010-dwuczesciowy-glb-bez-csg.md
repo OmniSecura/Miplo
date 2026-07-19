@@ -1,6 +1,6 @@
 # 0010 — Dwuczęściowy GLB bez CSG i bez trimesh
 
-Data: 2026-07-17  
+Data: 2026-07-17
 Status: przyjęte
 
 ## Kontekst

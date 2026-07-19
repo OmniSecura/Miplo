@@ -9,7 +9,7 @@ import unicodedata
 from collections.abc import Iterator, Mapping
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, cast
 
 from fastapi import UploadFile
 from slugify import slugify
@@ -45,9 +45,7 @@ REQUIRED_COLUMNS = frozenset(
 )
 
 # Te whitelisty są granicą zaufania między dumpem BGG a danymi Miplo.
-CSV_UPDATE_FIELDS = frozenset(
-    {"rating", "bgg_rank", "users_rated", "year_published"}
-)
+CSV_UPDATE_FIELDS = frozenset({"rating", "bgg_rank", "users_rated", "year_published"})
 CSV_FULL_FIELDS = CSV_UPDATE_FIELDS | frozenset({"title", "is_expansion"})
 
 _BIDI_CONTROLS = frozenset("\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069")
@@ -196,7 +194,7 @@ def _upsert_batch(
     used_slugs: set[str],
     mode: CatalogImportMode,
 ) -> tuple[int, int]:
-    unique_rows = {int(row["bgg_id"]): row for row in rows}
+    unique_rows = {cast(int, row["bgg_id"]): row for row in rows}
     existing = {
         game.bgg_id: game
         for game in db.scalars(select(Game).where(Game.bgg_id.in_(unique_rows))).all()
@@ -224,13 +222,14 @@ def _upsert_batch(
 
     statement = _dialect_insert(db, values)
     allowed_fields = CSV_FULL_FIELDS if mode is CatalogImportMode.FULL else CSV_UPDATE_FIELDS
-    update_values = {
-        field: getattr(statement.excluded, field)
-        for field in allowed_fields
-    }
+    update_values = {field: getattr(statement.excluded, field) for field in allowed_fields}
     update_values["updated_at"] = func.now()
+    # ORM i DDL definiują partial unique index (WHERE bgg_id IS NOT NULL);
+    # cel ON CONFLICT musi powtórzyć ten predykat, aby go zmatchować.
+    # Na PostgreSQL predykat pasuje też do pełnego unique indexu (starsze bazy).
     statement = statement.on_conflict_do_update(
         index_elements=[Game.bgg_id],
+        index_where=Game.bgg_id.is_not(None),
         set_=update_values,
     )
     db.execute(statement)
@@ -293,7 +292,7 @@ def import_catalog(
             if normalized is None:
                 errors += 1
                 continue
-            bgg_id = int(normalized["bgg_id"])
+            bgg_id = cast(int, normalized["bgg_id"])
             if bgg_id in seen_bgg_ids:
                 skipped += 1
                 continue

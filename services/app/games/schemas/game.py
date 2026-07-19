@@ -5,23 +5,24 @@ import unicodedata
 from datetime import datetime
 from decimal import Decimal
 from html.parser import HTMLParser
-from typing import Annotated
+from typing import Annotated, TypeVar
 from urllib.parse import urlsplit
 from uuid import UUID
 
 from fastapi import Form
+from fastapi.exceptions import RequestValidationError
 from pydantic import (
     BaseModel,
     BeforeValidator,
     ConfigDict,
     Field,
     StringConstraints,
+    ValidationError,
     model_validator,
 )
 
-from services.app.games.enums import GameLanguage
+from services.app.games.enums import GameLanguage, GameTypeName
 from services.app.shelf.schemas import ShelfItemResponse
-
 
 _BIDI_CONTROLS = frozenset("\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069")
 
@@ -80,7 +81,76 @@ GameDescription = Annotated[
     BeforeValidator(_plain_text),
     StringConstraints(strip_whitespace=True, max_length=2000),
 ]
-GameTypesJson = Annotated[str, StringConstraints(strip_whitespace=True, min_length=2, max_length=2000)]
+
+
+def _split_multipart_list(value: object) -> object:
+    """Swagger UI serializuje multi-select w multipart jako jedno pole CSV.
+
+    Akceptujemy oba formaty: powtórzone pola oraz "Euro,Strategia" w jednym.
+    Pusta lista (np. `game_types=` z wygenerowanego curla) staje się None.
+    """
+    if isinstance(value, list | tuple):
+        expanded: list[object] = []
+        for item in value:
+            if isinstance(item, str):
+                expanded.extend(part.strip() for part in item.split(",") if part.strip())
+            else:
+                expanded.append(item)
+        return expanded or None
+    return value
+
+
+def _blank_form_value_to_none(value: object) -> object:
+    """Multipart nie rozróżnia pola pominiętego od pustego stringa.
+
+    Swagger/curl wysyłają `pole=` dla niewypełnionych pól opcjonalnych;
+    traktujemy to jako brak wartości zamiast błędu parsowania.
+    """
+    if isinstance(value, str) and not value.strip():
+        return None
+    return value
+
+
+_BlankAsNone = BeforeValidator(_blank_form_value_to_none)
+# Typy WYŁĄCZNIE dla parametrów as_form — model waliduje właściwe ograniczenia.
+FormOptionalInt = Annotated[int | None, _BlankAsNone]
+FormOptionalDecimal = Annotated[Decimal | None, _BlankAsNone]
+FormOptionalStr = Annotated[str | None, _BlankAsNone]
+
+# Multi-select z zamkniętego katalogu GameTypeName; duplikaty odrzuca serwis.
+GameTypesList = Annotated[
+    list[GameTypeName],
+    BeforeValidator(_split_multipart_list),
+    Field(min_length=1, max_length=10),
+]
+
+# FastAPI nie stosuje BeforeValidator na LISTOWYCH polach Form, więc as_form
+# przyjmuje surowe stringi, a enum waliduje model. To schema przywraca
+# multi-select w Swaggerze, którego typ list[str] by nie wygenerował.
+_GAME_TYPES_FORM_SCHEMA = {
+    "items": {
+        "type": "string",
+        "enum": [member.value for member in GameTypeName],
+        "title": "GameTypeName",
+    }
+}
+
+
+_FormModelT = TypeVar("_FormModelT", bound=BaseModel)
+
+
+def _validated_form_model(cls: type[_FormModelT], **field_values: object) -> _FormModelT:
+    """Konwertuje błąd modelu z as_form na standardowe 422 validation_error.
+
+    Bez tego ValidationError podniesiony w ciele dependency omija handler
+    RequestValidationError i kończy się jako 500 internal_error.
+    """
+    try:
+        return cls(**field_values)
+    except ValidationError as exc:
+        raise RequestValidationError(exc.errors()) from exc
+
+
 BarcodeText = Annotated[
     str,
     StringConstraints(
@@ -120,7 +190,7 @@ class GameCreate(BaseModel):
     min_players: int = Field(ge=1, le=20)
     max_players: int = Field(ge=1, le=50)
     playing_time: int | None = Field(default=None, ge=1, le=1440)
-    game_types: GameTypesJson
+    game_types: GameTypesList
     box_width: BoxDimension | None = None
     box_height: BoxDimension | None = None
     box_depth: BoxDimension | None = None
@@ -139,16 +209,17 @@ class GameCreate(BaseModel):
         title: str = Form(...),
         min_players: int = Form(...),
         max_players: int = Form(...),
-        game_types: str = Form(...),
-        description: str | None = Form(None),
-        playing_time: int | None = Form(None),
-        box_width: Decimal | None = Form(None),
-        box_height: Decimal | None = Form(None),
-        box_depth: Decimal | None = Form(None),
-        year_published: int | None = Form(None),
-        instruction_url: str | None = Form(None),
+        game_types: list[str] = Form(..., json_schema_extra=_GAME_TYPES_FORM_SCHEMA),
+        description: FormOptionalStr = Form(None),
+        playing_time: FormOptionalInt = Form(None),
+        box_width: FormOptionalDecimal = Form(None),
+        box_height: FormOptionalDecimal = Form(None),
+        box_depth: FormOptionalDecimal = Form(None),
+        year_published: FormOptionalInt = Form(None),
+        instruction_url: FormOptionalStr = Form(None),
     ) -> "GameCreate":
-        return cls(
+        return _validated_form_model(
+            cls,
             title=title,
             description=description,
             min_players=min_players,
@@ -173,7 +244,7 @@ class GameUpdate(BaseModel):
     min_players: int | None = Field(default=None, ge=1, le=20)
     max_players: int | None = Field(default=None, ge=1, le=50)
     playing_time: int | None = Field(default=None, ge=1, le=1440)
-    game_types: GameTypesJson | None = None
+    game_types: GameTypesList | None = None
     box_width: BoxDimension | None = None
     box_height: BoxDimension | None = None
     box_depth: BoxDimension | None = None
@@ -183,19 +254,20 @@ class GameUpdate(BaseModel):
     @classmethod
     def as_form(
         cls,
-        title: str | None = Form(None),
-        description: str | None = Form(None),
-        min_players: int | None = Form(None),
-        max_players: int | None = Form(None),
-        playing_time: int | None = Form(None),
-        game_types: str | None = Form(None),
-        box_width: Decimal | None = Form(None),
-        box_height: Decimal | None = Form(None),
-        box_depth: Decimal | None = Form(None),
-        year_published: int | None = Form(None),
-        instruction_url: str | None = Form(None),
+        title: FormOptionalStr = Form(None),
+        description: FormOptionalStr = Form(None),
+        min_players: FormOptionalInt = Form(None),
+        max_players: FormOptionalInt = Form(None),
+        playing_time: FormOptionalInt = Form(None),
+        game_types: list[str] | None = Form(None, json_schema_extra=_GAME_TYPES_FORM_SCHEMA),
+        box_width: FormOptionalDecimal = Form(None),
+        box_height: FormOptionalDecimal = Form(None),
+        box_depth: FormOptionalDecimal = Form(None),
+        year_published: FormOptionalInt = Form(None),
+        instruction_url: FormOptionalStr = Form(None),
     ) -> "GameUpdate":
-        return cls(
+        return _validated_form_model(
+            cls,
             title=title,
             description=description,
             min_players=min_players,
@@ -212,15 +284,18 @@ class GameUpdate(BaseModel):
 
 class GalleryImageCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    caption: Annotated[
-        str,
-        BeforeValidator(_plain_single_line),
-        StringConstraints(strip_whitespace=True, min_length=1, max_length=120),
-    ] | None = None
+    caption: (
+        Annotated[
+            str,
+            BeforeValidator(_plain_single_line),
+            StringConstraints(strip_whitespace=True, min_length=1, max_length=120),
+        ]
+        | None
+    ) = None
 
     @classmethod
-    def as_form(cls, caption: str | None = Form(None)) -> "GalleryImageCreate":
-        return cls(caption=caption)
+    def as_form(cls, caption: FormOptionalStr = Form(None)) -> "GalleryImageCreate":
+        return _validated_form_model(cls, caption=caption)
 
 
 class GameSearchResult(BaseModel):
@@ -319,7 +394,7 @@ class BarcodeAssign(BaseModel):
         barcode: str = Form(...),
         language_code: GameLanguage = Form(...),
     ) -> "BarcodeAssign":
-        return cls(barcode=barcode, language_code=language_code)
+        return _validated_form_model(cls, barcode=barcode, language_code=language_code)
 
 
 class CatalogImportResult(BaseModel):

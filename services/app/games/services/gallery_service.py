@@ -45,7 +45,7 @@ async def _read_limited(file: UploadFile) -> bytes:
 
 def _optimize(raw: bytes) -> bytes:
     try:
-        image = Image.open(io.BytesIO(raw))
+        image: Image.Image = Image.open(io.BytesIO(raw))
         if image.format not in ALLOWED_FORMATS:
             raise ApiError.bad_request(ErrorCode.INVALID_FILE_TYPE)
         width, height = image.size
@@ -62,9 +62,7 @@ def _optimize(raw: bytes) -> bytes:
         raise ApiError.bad_request(ErrorCode.INVALID_FILE_TYPE)
 
     image = ImageOps.exif_transpose(image)
-    if image.mode in {"RGBA", "LA", "PA"} or (
-        image.mode == "P" and "transparency" in image.info
-    ):
+    if image.mode in {"RGBA", "LA", "PA"} or (image.mode == "P" and "transparency" in image.info):
         rgba = image.convert("RGBA")
         background = Image.new("RGB", rgba.size, (255, 255, 255))
         background.paste(rgba, mask=rgba.getchannel("A"))
@@ -103,14 +101,18 @@ def make_public(path: str) -> str:
     blob.cache_control = "public, max-age=31536000, immutable"
     blob.patch()
     blob.make_public()
-    return blob.public_url
+    return str(blob.public_url)
 
 
 def signed_preview_url(path: str) -> str:
-    return get_bucket().blob(path).generate_signed_url(
-        version="v4",
-        expiration=timedelta(minutes=15),
-        method="GET",
+    return str(
+        get_bucket()
+        .blob(path)
+        .generate_signed_url(
+            version="v4",
+            expiration=timedelta(minutes=15),
+            method="GET",
+        )
     )
 
 

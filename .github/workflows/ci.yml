@@ -1,0 +1,245 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  lint:
+    name: Lint & format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          enable-cache: true
+          working-directory: services
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install locked dependencies
+        run: uv sync --project services --frozen --all-extras --no-install-project
+      - name: Ruff lint
+        run: uv run --project services ruff check --output-format=github services
+      - name: Ruff format check
+        run: uv run --project services ruff format --check services
+
+  types:
+    name: Type check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          enable-cache: true
+          working-directory: services
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install locked dependencies
+        run: uv sync --project services --frozen --all-extras --no-install-project
+      - name: Mypy
+        run: uv run --project services mypy --config-file services/pyproject.toml services/app
+
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: miplo_test
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: miplo_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          enable-cache: true
+          working-directory: services
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install locked dependencies
+        run: uv sync --project services --frozen --all-extras --no-install-project
+      - name: Run tests with coverage
+        env:
+          ENV: dev
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: "5432"
+          POSTGRES_DB: miplo_test
+          POSTGRES_USER: miplo_test
+          POSTGRES_PASSWORD: test_password
+          RATE_LIMIT_STORAGE_URI: redis://localhost:6379/1
+          FIREBASE_ADMIN_CREDENTIALS: unused-in-tests.json
+          FIREBASE_STORAGE_BUCKET: unused-in-tests
+          BGG_API_TOKEN: ""
+        run: >-
+          uv run --project services pytest services/tests -v
+          --cov=services.app --cov-report=term-missing --cov-report=html:services/htmlcov
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: services/htmlcov/
+          if-no-files-found: warn
+          retention-days: 7
+
+  security:
+    name: Security scan
+    runs-on: ubuntu-latest
+    # gitleaks-action przy evencie pull_request listuje commity PR-a przez API
+    # (GET /pulls/{n}/commits) i wymaga pull-requests: read ponad globalne
+    # contents: read.
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          enable-cache: true
+          working-directory: services
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install locked dependencies
+        run: uv sync --project services --frozen --all-extras --no-install-project
+      - name: Audit Python dependencies
+        run: uv run --project services pip-audit --strict
+      - name: Analyze Python code with Bandit
+        run: uv run --project services bandit -r services/app services/scripts -ll
+      - name: Scan repository history for secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  docker:
+    name: Docker build & scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Lint Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: services/Dockerfile
+          ignore: DL3008,DL3013
+      - name: Build image
+        uses: docker/build-push-action@v7
+        with:
+          context: ./services
+          file: ./services/Dockerfile
+          push: false
+          load: true
+          tags: miplo:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: miplo:ci
+          format: table
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+      - name: Verify image does not contain secrets
+        run: >-
+          docker run --rm --entrypoint sh miplo:ci -c
+          'test ! -e /app/.env && test ! -e /app/services/.env && test ! -e /run/secrets'
+      - name: Create disposable Firebase credential for smoke test
+        env:
+          KEY_PATH: ${{ runner.temp }}/firebase-ci-key.pem
+          CREDENTIAL_PATH: ${{ runner.temp }}/firebase-ci.json
+        run: |
+          openssl genrsa -out "$KEY_PATH" 2048
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          private_key = Path(os.environ["KEY_PATH"]).read_text()
+          Path(os.environ["CREDENTIAL_PATH"]).write_text(json.dumps({
+              "type": "service_account",
+              "project_id": "miplo-ci",
+              "private_key_id": "ci-only",
+              "private_key": private_key,
+              "client_email": "ci@miplo-ci.iam.gserviceaccount.com",
+              "client_id": "100000000000000000000",
+              "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+              "token_uri": "https://oauth2.googleapis.com/token",
+              "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+              "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/ci%40miplo-ci.iam.gserviceaccount.com"
+          }))
+          PY
+          chmod 644 "$CREDENTIAL_PATH"
+      - name: Smoke test container
+        env:
+          CREDENTIAL_PATH: ${{ runner.temp }}/firebase-ci.json
+        run: |
+          docker run -d --name miplo-smoke \
+            -e ENV=local \
+            -e PORT=8080 \
+            -e SQLITE_PATH=/tmp/smoke.db \
+            -e FIREBASE_ADMIN_CREDENTIALS=/run/secrets/firebase-ci.json \
+            -e FIREBASE_STORAGE_BUCKET=miplo-ci.invalid \
+            -e BGG_API_TOKEN= \
+            -v "$CREDENTIAL_PATH:/run/secrets/firebase-ci.json:ro" \
+            -p 127.0.0.1:8080:8080 \
+            miplo:ci
+
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8080/health > /dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+
+          docker logs miplo-smoke
+          exit 1
+      - name: Enforce production image size limit
+        # Limit pilnuje regresji, nie minimalizmu. ~278 MB to uzasadniony koszt
+        # stacka: firebase_admin (grpc+google ~27 MB), Pillow (~20), psycopg
+        # (~19), cryptography (~15), uvloop (~14), SQLAlchemy (~14).
+        run: |
+          size=$(docker image inspect miplo:ci --format '{{.Size}}')
+          max=$((300 * 1024 * 1024))
+          echo "Image size: $size bytes (limit: $max bytes)"
+          test "$size" -le "$max"
+      - name: Remove smoke container
+        if: always()
+        run: docker rm -f miplo-smoke 2>/dev/null || true

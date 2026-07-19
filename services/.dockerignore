@@ -1,0 +1,36 @@
+# Sekrety nigdy nie mogą trafić do kontekstu ani warstwy obrazu.
+.env
+.env.*
+!.env.example
+secrets/
+firebase-admin*.json
+service-account*.json
+*-credentials.json
+*.pem
+*.key
+
+# Lokalne środowiska i artefakty Pythona.
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# Dane deweloperskie, testy i lokalne bazy nie są potrzebne w runtime.
+tests/
+scripts/data/
+*.db
+*.sqlite3
+*.db.backup-*
+*.db.bak-*
+
+# Pliki repozytorium i dokumentacja.
+.git/
+.github/
+.pre-commit-config.yaml
+*.md

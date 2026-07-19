@@ -1,6 +1,6 @@
 # 0006 — BGG przez backend z cache w PostgreSQL
 
-Data: 2026-07-17  
+Data: 2026-07-17
 Status: przyjęte
 
 > TTL 24 h został zastąpiony przez strategię 30 dni + tygodniowy CSV w ADR 0016.

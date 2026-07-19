@@ -24,7 +24,6 @@ from services.app.ratings.models import GameRating, ReviewReport
 from services.app.shelf.models import ShelfItem  # noqa: F401
 from services.app.users.models import User  # noqa: F401
 
-
 _GAME_COLUMNS = {
     "miplo_rating": "NUMERIC(3, 1)",
     "miplo_ratings_count": "INTEGER NOT NULL DEFAULT 0",
@@ -53,9 +52,7 @@ def migrate(database_path: Path) -> tuple[bool, Path | None]:
     try:
         tables = {
             row[0]
-            for row in connection.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table'"
-            )
+            for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
         }
         if "games" not in tables or "users" not in tables:
             raise RuntimeError("Baza nie zawiera wymaganych tabel games i users")
@@ -66,9 +63,7 @@ def migrate(database_path: Path) -> tuple[bool, Path | None]:
 
         backup_path = _backup(connection, database_path)
         for column in sorted(missing_columns):
-            connection.execute(
-                f'ALTER TABLE games ADD COLUMN "{column}" {_GAME_COLUMNS[column]}'
-            )
+            connection.execute(f'ALTER TABLE games ADD COLUMN "{column}" {_GAME_COLUMNS[column]}')
         connection.commit()
     finally:
         connection.close()

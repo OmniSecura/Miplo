@@ -1,10 +1,10 @@
 """Testy domeny ratings: walidacja, agregaty, moderacja i integracje."""
 
+import asyncio
 import os
 import sys
 import tempfile
 import unittest
-import asyncio
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from unittest.mock import AsyncMock, patch
@@ -15,9 +15,9 @@ if "services.app.core.database" not in sys.modules:
     os.environ.setdefault("FIREBASE_ADMIN_CREDENTIALS", "unused-in-unit-tests.json")
     os.environ.setdefault("FIREBASE_STORAGE_BUCKET", "unused-in-unit-tests")
 
-from pydantic import ValidationError
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 from sqlalchemy import select
 
 from services.app.core import bgg_client
@@ -118,21 +118,24 @@ class RatingsServiceTests(unittest.TestCase):
             return None
 
         client = TestClient(app, raise_server_exceptions=False)
-        invalid = client.post("/rating", json={"rating": 8.3})
-        self.assertEqual(invalid.status_code, 422)
-        self.assertEqual(
-            invalid.json()["detail"]["error_code"],
-            ErrorCode.VALIDATION_ERROR.value,
-        )
-        self.assertEqual(
-            invalid.json()["detail"]["details"]["errors"][0]["field"],
-            "rating",
-        )
-        missing = client.get("/does-not-exist")
-        self.assertEqual(
-            missing.json()["detail"]["error_code"],
-            ErrorCode.ROUTE_NOT_FOUND.value,
-        )
+        try:
+            invalid = client.post("/rating", json={"rating": 8.3})
+            self.assertEqual(invalid.status_code, 422)
+            self.assertEqual(
+                invalid.json()["detail"]["error_code"],
+                ErrorCode.VALIDATION_ERROR.value,
+            )
+            self.assertEqual(
+                invalid.json()["detail"]["details"]["errors"][0]["field"],
+                "rating",
+            )
+            missing = client.get("/does-not-exist")
+            self.assertEqual(
+                missing.json()["detail"]["error_code"],
+                ErrorCode.ROUTE_NOT_FOUND.value,
+            )
+        finally:
+            client.close()
 
     def test_crud_is_scoped_to_token_user_and_recalculates(self) -> None:
         created = self._rate(0, "8.5", "Bardzo dobra gra ekonomiczna.")
@@ -227,7 +230,9 @@ class RatingsServiceTests(unittest.TestCase):
         self.db.refresh(self.game)
         self.assertEqual(self.game.miplo_ratings_count, 3)
         self.assertEqual(
-            self.db.scalar(select(ReviewReport).where(ReviewReport.rating_id == rating.id)).resolved,
+            self.db.scalar(
+                select(ReviewReport).where(ReviewReport.rating_id == rating.id)
+            ).resolved,
             True,
         )
 

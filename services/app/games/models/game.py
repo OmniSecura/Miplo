@@ -1,7 +1,10 @@
 """Modele ORM modułu games: cache BGG i gry dodawane przez społeczność."""
 
+from __future__ import annotations
+
 from datetime import datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
@@ -9,7 +12,6 @@ from sqlalchemy import (
     CheckConstraint,
     Column,
     DateTime,
-    Enum as SqlEnum,
     ForeignKey,
     Index,
     Integer,
@@ -22,12 +24,20 @@ from sqlalchemy import (
     Uuid,
     false,
     func,
+    text,
     true,
+)
+from sqlalchemy import (
+    Enum as SqlEnum,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from services.app.core.database import Base
 from services.app.games.enums import GameLanguage
+
+if TYPE_CHECKING:
+    from services.app.ratings.models import GameRating
+    from services.app.shelf.models import ShelfItem
 
 
 game_game_types = Table(
@@ -84,10 +94,28 @@ class Game(Base):
         Index("ix_games_title", "title"),
         Index("ix_games_is_expansion", "is_expansion"),
         Index("ix_games_bgg_rank", "bgg_rank"),
+        # Partial unique index identyczny z produkcyjnym DDL. Upsert importu
+        # celuje w niego przez ON CONFLICT (bgg_id) WHERE bgg_id IS NOT NULL.
+        Index(
+            "ix_games_bgg_id",
+            "bgg_id",
+            unique=True,
+            postgresql_where=text("bgg_id IS NOT NULL"),
+            sqlite_where=text("bgg_id IS NOT NULL"),
+        ),
+        # BGG może mieć wiele edycji o tej samej nazwie; customowych duplikatów
+        # nie dopuszczamy — case-insensitive, jak w produkcyjnym DDL.
+        Index(
+            "uq_games_custom_title_ci",
+            text("lower(title)"),
+            unique=True,
+            postgresql_where=text("source = 'custom'"),
+            sqlite_where=text("source = 'custom'"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    bgg_id: Mapped[int | None] = mapped_column(Integer, unique=True, index=True)
+    bgg_id: Mapped[int | None] = mapped_column(Integer)
     slug: Mapped[str] = mapped_column(String(200), unique=True, index=True, nullable=False)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
@@ -138,7 +166,9 @@ class Game(Base):
     )
     model_submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    source: Mapped[str] = mapped_column(String(10), nullable=False, default="bgg", server_default="bgg")
+    source: Mapped[str] = mapped_column(
+        String(10), nullable=False, default="bgg", server_default="bgg"
+    )
     is_verified: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
@@ -227,9 +257,7 @@ class GameImage(Base):
         Integer,
         ForeignKey("users.id", ondelete="SET NULL"),
     )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     game: Mapped[Game] = relationship(back_populates="images")
 
@@ -299,9 +327,7 @@ class GameBarcode(Base):
         Integer,
         ForeignKey("users.id", ondelete="SET NULL"),
     )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     game: Mapped[Game] = relationship(back_populates="barcodes")

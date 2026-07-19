@@ -120,8 +120,9 @@ uruchamia go Cloud Scheduler jako Cloud Run Job codziennie o 03:00.
 
 ## Gry customowe
 
-`POST /api/games` przyjmuje `multipart/form-data`. Pole `game_types` jest tekstem
-JSON, np. `["Euro", "Familijna"]`. Backend:
+`POST /api/games` przyjmuje `multipart/form-data`. Pole `game_types` to lista
+wartości enuma `GameTypeName` (multipart powtarza pole, Swagger renderuje
+multi-select), np. `game_types=Euro&game_types=Familijna`. Backend:
 
 - usuwa HTML z tytułu i opisu,
 - waliduje liczbę graczy, rok, czas, wymiary i URL,
@@ -231,13 +232,16 @@ Publiczne wyszukiwanie, katalog, slug i barcode zwracają wyłącznie gry z
 
 ## Typy i kategorie
 
-Gra ma wiele typów przez `game_game_types`. Kategorie BGG są mapowane na bardziej
-czytelne polskie typy, np. `Economic → Euro`. Nieznana kategoria nie jest tracona:
-powstaje nowy `GameType` z automatycznym slugiem.
+Gra ma wiele typów przez `game_game_types`. Katalog typów jest ZAMKNIĘTY: enum
+`GameTypeName` (`services/app/games/enums.py`) wylicza wszystkie dozwolone
+wartości ("Strategia", "Euro", "Familijna", ...). Kategorie BGG są mapowane na
+te wartości, np. `Economic → Euro`; kategoria spoza mapy jest pomijana, więc
+katalog nigdy nie rośnie poza enum. Custom gry wybierają typy z tego samego
+enuma (multi-select w Swaggerze).
 
-Celowo nie używamy kodowego `Enum`: katalog kategorii BGG jest otwarty i zmienny,
-a jedna gra może należeć do wielu typów. Tabela słownikowa i relacja many-to-many
-pozwalają dodać nowy typ bez wdrażania kodu ani migracji enumu.
+Tabela słownikowa `game_types` pozostaje w bazie jako relacja many-to-many —
+rekordy powstają leniwie przy pierwszym użyciu wartości enuma. Dodanie nowego
+typu to jedna linia w enumie (i opcjonalnie wpis w mapie kategorii BGG).
 
 ## Barcode
 

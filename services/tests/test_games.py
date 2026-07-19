@@ -17,8 +17,8 @@ os.environ.setdefault("FIREBASE_ADMIN_CREDENTIALS", "unused-in-unit-tests.json")
 os.environ.setdefault("FIREBASE_STORAGE_BUCKET", "unused-in-unit-tests")
 os.environ["ADMIN_API_KEY"] = "unit-test-admin-key-long-enough-123"
 
-from fastapi import UploadFile
 import httpx
+from fastapi import UploadFile
 from PIL import Image
 from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import select
@@ -29,8 +29,8 @@ from services.app.core.auth import get_admin_access, get_current_admin
 from services.app.core.config import settings
 from services.app.core.database import Base, SessionLocal, engine
 from services.app.core.errors import ApiError, ErrorCode
+from services.app.games.enums import CatalogImportMode, GameLanguage, GameTypeName
 from services.app.games.models import Game, GameBarcode, GameImage
-from services.app.games.enums import CatalogImportMode, GameLanguage
 from services.app.games.routers.router import submit_3d_model
 from services.app.games.schemas import BarcodeAssign, GalleryImageCreate, GameCreate, GameUpdate
 from services.app.games.services import (
@@ -77,7 +77,7 @@ class GamesServiceTests(unittest.TestCase):
             min_players=2,
             max_players=4,
             playing_time=120,
-            game_types='["Euro", "Ekonomiczna"]',
+            game_types=[GameTypeName.EURO, GameTypeName.EKONOMICZNA],
         )
         return asyncio.run(game_service.create_custom_game(self.db, payload, None, self.user))
 
@@ -212,10 +212,10 @@ class GamesServiceTests(unittest.TestCase):
 
     def test_catalog_csv_import_is_idempotent_and_excludes_expansions(self) -> None:
         csv_data = (
-            "id,name,yearpublished,rank,bayesaverage,average,usersrated,is_expansion\n"
-            "224517,Brass Birmingham,2018,1,8.40,8.61,50000,0\n"
-            "999999,Brass Expansion,2020,100,6.90,7.00,200,1\n"
-        ).encode()
+            b"id,name,yearpublished,rank,bayesaverage,average,usersrated,is_expansion\n"
+            b"224517,Brass Birmingham,2018,1,8.40,8.61,50000,0\n"
+            b"999999,Brass Expansion,2020,100,6.90,7.00,200,1\n"
+        )
         upload = UploadFile(
             file=io.BytesIO(csv_data),
             filename="bgg.csv",
@@ -251,7 +251,7 @@ class GamesServiceTests(unittest.TestCase):
         common = {
             "min_players": 1,
             "max_players": 2,
-            "game_types": '["Familijna"]',
+            "game_types": [GameTypeName.FAMILIJNA],
         }
         with self.assertRaises(ValidationError):
             GameCreate(title="Gra\nPodmieniona", **common)
@@ -326,9 +326,7 @@ class GamesServiceTests(unittest.TestCase):
     def test_approved_barcode_can_only_be_replaced_through_moderation(self) -> None:
         game = self._create_custom()
         moderation_service.approve_game(self.db, game.slug)
-        first = game_service.propose_barcode(
-            self.db, game.slug, "5901549927658", "pl", self.other
-        )
+        first = game_service.propose_barcode(self.db, game.slug, "5901549927658", "pl", self.other)
         moderation_service.approve_barcode(self.db, first.public_id)
 
         replacement = game_service.propose_barcode(
@@ -353,9 +351,7 @@ class GamesServiceTests(unittest.TestCase):
         moderation_service.approve_game(self.db, game.slug)
         moderation_service.set_contributions_enabled(self.db, game.slug, False)
         with self.assertRaises(ApiError) as context:
-            game_service.propose_barcode(
-                self.db, game.slug, "5901549927658", "pl", self.other
-            )
+            game_service.propose_barcode(self.db, game.slug, "5901549927658", "pl", self.other)
         self.assertEqual(
             context.exception.detail["error_code"],
             ErrorCode.CONTRIBUTIONS_LOCKED.value,
@@ -363,9 +359,7 @@ class GamesServiceTests(unittest.TestCase):
 
     def test_delete_custom_game_cleans_assets_and_record(self) -> None:
         game = self._create_custom()
-        with patch(
-            "services.app.games.services.cover_service.delete_game_assets"
-        ) as delete_assets:
+        with patch("services.app.games.services.cover_service.delete_game_assets") as delete_assets:
             game_service.delete_custom_game(self.db, game.slug, self.user)
         delete_assets.assert_called_once_with(game.id)
         self.assertIsNone(self.db.get(Game, game.id))
@@ -417,8 +411,14 @@ class GamesServiceTests(unittest.TestCase):
         self.assertEqual(document["extras"]["axisConvention"], "X=width,Y=height,Z=depth")
 
         # Duże obrazy muszą trafić na wieko i spód, nie na pionowe boki.
-        self.assertEqual(document["materials"][document["meshes"][1]["primitives"][-1]["material"]]["name"], "front")
-        self.assertEqual(document["materials"][document["meshes"][0]["primitives"][4]["material"]]["name"], "back")
+        self.assertEqual(
+            document["materials"][document["meshes"][1]["primitives"][-1]["material"]]["name"],
+            "front",
+        )
+        self.assertEqual(
+            document["materials"][document["meshes"][0]["primitives"][4]["material"]]["name"],
+            "back",
+        )
 
         binary_header = 20 + json_length
         binary_length, binary_type = struct.unpack("<I4s", glb[binary_header : binary_header + 8])
@@ -447,8 +447,7 @@ class GamesServiceTests(unittest.TestCase):
         )
 
         seam_materials = [
-            primitive["material"]
-            for primitive in document["meshes"][1]["primitives"][4:8]
+            primitive["material"] for primitive in document["meshes"][1]["primitives"][4:8]
         ]
         self.assertEqual(seam_materials, [6, 6, 6, 6])
 
@@ -484,9 +483,7 @@ class GamesServiceTests(unittest.TestCase):
         self.assertGreater(bottom_pixel[0], bottom_pixel[2])
 
     def test_multipart_text_zero_is_valid_rotation(self) -> None:
-        annotation = inspect.signature(submit_3d_model).parameters[
-            "rotation_front"
-        ].annotation
+        annotation = inspect.signature(submit_3d_model).parameters["rotation_front"].annotation
         self.assertEqual(TypeAdapter(annotation).validate_python("0"), "0")
         with self.assertRaises(ValidationError):
             TypeAdapter(annotation).validate_python("45")
@@ -512,9 +509,7 @@ class GamesServiceTests(unittest.TestCase):
                     self.other,
                 )
             )
-        image = self.db.scalar(
-            select(GameImage).where(GameImage.public_id == submission.public_id)
-        )
+        image = self.db.scalar(select(GameImage).where(GameImage.public_id == submission.public_id))
         self.assertEqual(image.created_by_id, self.other.id)
         self.assertFalse(image.is_verified)
 
@@ -527,9 +522,7 @@ class GamesServiceTests(unittest.TestCase):
         self.db.commit()
 
         game, _ = game_service.begin_model_submission(self.db, game.slug, self.other)
-        with patch(
-            "services.app.games.services.box_generator_service.delete_path"
-        ) as delete_path:
+        with patch("services.app.games.services.box_generator_service.delete_path") as delete_path:
             game_service.delete_model_submission(self.db, game.slug, self.other)
         self.db.refresh(game)
         self.assertEqual(game.model_3d_url, "https://storage.example/approved.glb")
@@ -600,9 +593,7 @@ class GamesServiceTests(unittest.TestCase):
         malicious = b'<!DOCTYPE x [<!ENTITY boom "payload">]><items>&boom;</items>'
 
         async def run_request():
-            transport = httpx.MockTransport(
-                lambda _request: httpx.Response(200, content=malicious)
-            )
+            transport = httpx.MockTransport(lambda _request: httpx.Response(200, content=malicious))
             async with httpx.AsyncClient(transport=transport) as client:
                 return await bgg_client._get_xml(client, "thing", {"id": "1"})
 

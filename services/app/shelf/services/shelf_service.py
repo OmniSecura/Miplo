@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import math
+from typing import cast
 
 from sqlalchemy import case, func, select
 from sqlalchemy.exc import IntegrityError
@@ -46,7 +47,7 @@ def to_response(item: ShelfItem) -> ShelfItemResponse:
         lendable=item.lendable,
         lending_deposit=item.lending_deposit,
         lending_notes=item.lending_notes,
-        condition=item.condition,
+        condition=ShelfCondition(item.condition) if item.condition else None,
         notes=item.notes,
         added_at=item.added_at,
         game_slug=game.slug,
@@ -68,7 +69,7 @@ def to_public_response(item: ShelfItem) -> ShelfPublicItem:
         lendable=item.lendable,
         lending_deposit=item.lending_deposit if item.lendable else None,
         lending_notes=item.lending_notes if item.lendable else None,
-        condition=item.condition,
+        condition=ShelfCondition(item.condition) if item.condition else None,
         added_at=item.added_at,
         game_slug=game.slug,
         game_title=game.title,
@@ -162,9 +163,9 @@ def get_my_shelf(
         condition=condition,
         players=players,
     )
-    items = db.scalars(
-        _apply_sort(query, sort).offset((page - 1) * size).limit(size)
-    ).unique().all()
+    items = (
+        db.scalars(_apply_sort(query, sort).offset((page - 1) * size).limit(size)).unique().all()
+    )
     return PaginatedShelf(
         items=[to_response(item) for item in items],
         total=total,
@@ -189,16 +190,18 @@ def get_user_shelf(
     filters = [ShelfItem.user_id == user.id, Game.is_verified.is_(True)]
     if lendable is not None:
         filters.append(ShelfItem.lendable.is_(lendable))
-    total = db.scalar(
-        select(func.count(ShelfItem.id)).join(ShelfItem.game).where(*filters)
-    ) or 0
-    items = db.scalars(
-        _items_query()
-        .where(*filters)
-        .order_by(ShelfItem.added_at.desc(), ShelfItem.id.desc())
-        .offset((page - 1) * size)
-        .limit(size)
-    ).unique().all()
+    total = db.scalar(select(func.count(ShelfItem.id)).join(ShelfItem.game).where(*filters)) or 0
+    items = (
+        db.scalars(
+            _items_query()
+            .where(*filters)
+            .order_by(ShelfItem.added_at.desc(), ShelfItem.id.desc())
+            .offset((page - 1) * size)
+            .limit(size)
+        )
+        .unique()
+        .all()
+    )
     return PaginatedPublicShelf(
         items=[to_public_response(item) for item in items],
         total=total,
@@ -209,11 +212,14 @@ def get_user_shelf(
 
 
 def _get_item(db: Session, user_id: int, game_id: int) -> ShelfItem | None:
-    return db.scalar(
-        _items_query().where(
-            ShelfItem.user_id == user_id,
-            ShelfItem.game_id == game_id,
-        )
+    return cast(
+        ShelfItem | None,
+        db.scalar(
+            _items_query().where(
+                ShelfItem.user_id == user_id,
+                ShelfItem.game_id == game_id,
+            )
+        ),
     )
 
 
@@ -221,11 +227,14 @@ def _get_item_by_slug(db: Session, user_id: int, game_slug: str) -> ShelfItem | 
     normalized = game_service.normalize_slug(game_slug)
     if not normalized:
         return None
-    return db.scalar(
-        _items_query().where(
-            ShelfItem.user_id == user_id,
-            Game.slug == normalized,
-        )
+    return cast(
+        ShelfItem | None,
+        db.scalar(
+            _items_query().where(
+                ShelfItem.user_id == user_id,
+                Game.slug == normalized,
+            )
+        ),
     )
 
 
@@ -322,9 +331,7 @@ async def import_bgg_collection(
             collection_by_id = {item.bgg_id: item for item in collection}
             unique_ids = list(dict.fromkeys(item.bgg_id for item in collection))
             existing_game_ids = set(
-                db.scalars(
-                    select(ShelfItem.game_id).where(ShelfItem.user_id == user_id)
-                ).all()
+                db.scalars(select(ShelfItem.game_id).where(ShelfItem.user_id == user_id)).all()
             )
 
             for offset in range(0, len(unique_ids), _IMPORT_BATCH_SIZE):
@@ -343,7 +350,8 @@ async def import_bgg_collection(
                     )
                     failed += len(batch)
                     processed_ids.update(batch)
-                    if exc.detail["error_code"] == ErrorCode.BGG_RATE_LIMITED.value:
+                    detail: dict[str, object] = exc.detail if isinstance(exc.detail, dict) else {}
+                    if detail.get("error_code") == ErrorCode.BGG_RATE_LIMITED.value:
                         failed += len(unique_ids) - len(processed_ids)
                         break
                     continue

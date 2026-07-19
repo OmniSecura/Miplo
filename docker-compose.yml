@@ -1,0 +1,71 @@
+name: miplo
+
+services:
+  # Lokalny PostgreSQL. Port jest związany tylko z loopbackiem hosta.
+  # Obraz postgres czyta POSTGRES_USER/PASSWORD/DB z tego samego pliku co API,
+  # więc dane logowania nie mogą się rozjechać.
+  db:
+    image: postgres:16-alpine
+    env_file:
+      - ./services/.env.docker
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/sql/tables/users/users.sql:/docker-entrypoint-initdb.d/01-users.sql:ro
+      - ./database/sql/tables/games/games.sql:/docker-entrypoint-initdb.d/02-games.sql:ro
+      - ./database/sql/tables/shelf_items/shelf_items.sql:/docker-entrypoint-initdb.d/03-shelf-items.sql:ro
+      - ./database/sql/tables/game_ratings/game_ratings.sql:/docker-entrypoint-initdb.d/04-game-ratings.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U miplo -d miplo"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # Redis przechowuje współdzielone liczniki rate limitera.
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # API korzysta z produkcyjnego stage'a, ale kod aplikacji jest montowany
+  # read-only, aby watchfiles zapewniał hot reload bez przebudowy obrazu.
+  api:
+    build:
+      context: ./services
+      dockerfile: Dockerfile
+      target: runtime
+    init: true
+    # Całe środowisko pochodzi z .env.docker — compose niczego nie nadpisuje.
+    # Zwykły .env NIE jest ładowany w kontenerach.
+    env_file:
+      - ./services/.env.docker
+    ports:
+      - "127.0.0.1:8000:8080"
+    volumes:
+      - ./services/app:/app/services/app:ro
+      - ./secrets/firebase-admin-dev.json:/run/secrets/firebase-admin.json:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command:
+      - sh
+      - -c
+      - exec uvicorn services.app.server:app --host 0.0.0.0 --port 8080 --reload
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:

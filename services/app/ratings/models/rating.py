@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
@@ -25,14 +26,17 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from services.app.core.database import Base
 
+if TYPE_CHECKING:
+    from services.app.games.models import Game
+    from services.app.users.models import User
+
 
 class GameRating(Base):
     __tablename__ = "game_ratings"
     __table_args__ = (
         UniqueConstraint("user_id", "game_id", name="uq_user_game_rating"),
         CheckConstraint(
-            "rating >= 1 AND rating <= 10 AND "
-            "rating * 2 = CAST(rating * 2 AS INTEGER)",
+            "rating >= 1 AND rating <= 10 AND rating * 2 = CAST(rating * 2 AS INTEGER)",
             name="ck_game_ratings_value",
         ),
         CheckConstraint(

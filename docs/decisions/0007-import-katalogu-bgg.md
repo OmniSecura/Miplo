@@ -1,6 +1,6 @@
 # 0007 — Operatorski import rankingu BGG i leniwe wzbogacanie
 
-Data: 2026-07-17  
+Data: 2026-07-17
 Status: przyjęte
 
 > Endpoint, autoryzację, limity i atomowość importu zastępuje ADR 0016.

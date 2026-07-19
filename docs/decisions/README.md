@@ -21,4 +21,3 @@ po cichu; istotna zmiana powinna dostać kolejny numer albo jawne uzupełnienie.
 | [`0014`](0014-ratings-independent-from-bgg.md) | oceny Miplo niezależne od BGG i półki | przyjęte |
 | [`0015`](0015-security-hardening.md) | revocation Firebase, pre-auth limiter i request-bound GLB | przyjęte |
 | [`0016`](0016-bgg-sync-strategy.md) | throttle, deduplikacja, CSV update i nightly sync BGG | przyjęte |
-
