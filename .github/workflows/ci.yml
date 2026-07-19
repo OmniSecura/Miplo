@@ -141,7 +141,7 @@ jobs:
       - name: Analyze Python code with Bandit
         run: uv run --project services bandit -r services/app services/scripts -ll
       - name: Scan repository history for secrets
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
