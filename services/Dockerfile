@@ -20,6 +20,9 @@ FROM python:3.11-slim-bookworm AS runtime
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl libpq5 \
     && rm -rf /var/lib/apt/lists/* \
+    # Aplikacja działa wyłącznie z /app/services/.venv; systemowe narzędzia
+    # instalacyjne to zbędna powierzchnia ataku (CVE w setuptools/_vendor).
+    && python -m pip uninstall -y wheel setuptools pip \
     && groupadd --system --gid 1001 miplo \
     && useradd --system --uid 1001 --gid miplo --create-home miplo
 
