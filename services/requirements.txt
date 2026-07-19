@@ -42,7 +42,7 @@ fastapi==0.139.2
     # via miplo (pyproject.toml)
 firebase-admin==7.5.0
     # via miplo (pyproject.toml)
-google-api-core==2.31.0
+google-api-core==2.32.0
     # via
     #   firebase-admin
     #   google-cloud-core
@@ -144,7 +144,7 @@ pydantic==2.13.4
     # via
     #   fastapi
     #   pydantic-settings
-pydantic-core==2.46.4
+pydantic-core==2.47.0
     # via pydantic
 pydantic-settings==2.14.2
     # via miplo (pyproject.toml)
@@ -200,7 +200,7 @@ uvicorn==0.51.0
     # via miplo (pyproject.toml)
 watchfiles==1.2.0
     # via uvicorn
-websockets==16.1
+websockets==16.1.1
     # via uvicorn
 wrapt==2.2.2
     # via deprecated
