@@ -1,6 +1,6 @@
 # 0008 — Customowe gry we wspólnym katalogu z moderacją
 
-Data: 2026-07-17  
+Data: 2026-07-17
 Status: przyjęte
 
 ## Kontekst

@@ -39,9 +39,7 @@ def get_by_tag(db: Session, tag: str) -> User | None:
 def get_public_profile(db: Session, tag: str) -> User | None:
     """Publiczny widok po tagu — nieaktywne konta są niewidoczne
     (router zwraca 404)."""
-    return db.scalar(
-        select(User).where(User.tag == tag, User.is_active.is_(True))
-    )
+    return db.scalar(select(User).where(User.tag == tag, User.is_active.is_(True)))
 
 
 # ── Tag: generowanie przy pierwszym logowaniu ─────────────────────────────────
@@ -158,9 +156,7 @@ def delete_account(db: Session, user: User) -> None:
     from services.app.ratings.services import rating_service
 
     affected_game_ids = set(
-        db.scalars(
-            select(GameRating.game_id).where(GameRating.user_id == user.id)
-        ).all()
+        db.scalars(select(GameRating.game_id).where(GameRating.user_id == user.id)).all()
     )
     db.delete(user)
     db.flush()

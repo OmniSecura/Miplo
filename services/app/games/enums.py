@@ -15,4 +15,3 @@ class CatalogImportMode(str, Enum):
 
     UPDATE = "update"
     FULL = "full"
-

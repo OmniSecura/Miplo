@@ -19,7 +19,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # ── Metadane aplikacji — stałe, nie konfiguracja środowiska ──────────────────
 
 APP_NAME = "Miplo"
-APP_DESCRIPTION = "Board game shelf & community app - 3D collection, local player matchmaking, and game lending."
+APP_DESCRIPTION = (
+    "Board game shelf & community app - 3D collection, local player matchmaking, and game lending."
+)
 APP_VERSION = "0.0.1"
 APP_AUTHORS = "Bartosz Malujda"
 
@@ -122,7 +124,8 @@ class Settings(BaseSettings):
         bgg_url = urlsplit(self.BGG_API_BASE)
         if (
             bgg_url.scheme != "https"
-            or (bgg_url.hostname or "").lower() not in {"boardgamegeek.com", "www.boardgamegeek.com"}
+            or (bgg_url.hostname or "").lower()
+            not in {"boardgamegeek.com", "www.boardgamegeek.com"}
             or bgg_url.username
             or bgg_url.password
             or bgg_url.query
@@ -151,4 +154,4 @@ class Settings(BaseSettings):
         return self
 
 
-settings = Settings()
+settings = Settings()  # type: ignore[call-arg]  # values come from env/.env

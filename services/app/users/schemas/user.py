@@ -13,9 +13,17 @@ import unicodedata
 from datetime import datetime
 from typing import Annotated
 
-from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, EmailStr, StringConstraints
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    EmailStr,
+    StringConstraints,
+)
 
 # ── Typy pól — jedna definicja ograniczeń na pole ─────────────────────────────
+
 
 def _lowercase(value: object) -> object:
     return value.lower() if isinstance(value, str) else value
@@ -23,9 +31,7 @@ def _lowercase(value: object) -> object:
 
 # Znaki przejmujące kierunek tekstu (RTL override itd.) — pozwalają wizualnie
 # spoofować wizualny kierunek nazwy, więc blokujemy je twardo.
-_BIDI_CONTROLS = frozenset(
-    "\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
-)
+_BIDI_CONTROLS = frozenset("\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069")
 
 
 def _reject_control_chars(value: str) -> str:

@@ -67,12 +67,8 @@ def list_game_ratings(
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=50),
     with_review: bool | None = Query(default=None),
-    min_rating: Decimal | None = Query(
-        default=None, ge=Decimal("1"), le=Decimal("10"), multiple_of=Decimal("0.5")
-    ),
-    max_rating: Decimal | None = Query(
-        default=None, ge=Decimal("1"), le=Decimal("10"), multiple_of=Decimal("0.5")
-    ),
+    min_rating: Decimal | None = Query(default=None, ge=1.0, le=10.0, multiple_of=0.5),
+    max_rating: Decimal | None = Query(default=None, ge=1.0, le=10.0, multiple_of=0.5),
     sort: RatingSort = Query(default=RatingSort.NEWEST),
     current_user: User | None = Depends(get_current_user_optional),
     db: Session = Depends(get_db),

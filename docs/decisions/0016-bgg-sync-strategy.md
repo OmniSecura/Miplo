@@ -1,6 +1,6 @@
 # ADR 0016: rozdzielone rytmy i kontrolowana synchronizacja BGG
 
-Data: 2026-07-18  
+Data: 2026-07-18
 Status: przyjęte
 
 ## Kontekst

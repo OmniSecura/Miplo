@@ -1,5 +1,6 @@
 """Publiczny katalog gier oraz chronione operacje BGG/custom/import."""
 
+from enum import Enum
 from typing import Literal
 from uuid import UUID
 
@@ -35,29 +36,29 @@ from services.app.core.security.limiter import (
 from services.app.games.schemas import (
     BarcodeAssign,
     BarcodeSubmission,
+    GalleryImageCreate,
     GameCreate,
     GameDetail,
+    GameImageSubmission,
     GameListItem,
     GameSearchResult,
     GameUpdate,
-    GalleryImageCreate,
-    GameImageSubmission,
     PaginatedGames,
 )
 from services.app.games.services import (
     box_generator_service,
     game_service,
 )
-from services.app.users.models import User
 from services.app.shelf.services import shelf_service
+from services.app.users.models import User
 
 games_router = APIRouter()
 
-TAG_GAMES = ["games"]
-TAG_BGG_GAMES = ["BGG games"]
-TAG_CUSTOM_GAMES = ["custom games"]
-TAG_GAME_GALLERY = ["game gallery"]
-TAG_3D_MODELS = ["3D models"]
+TAG_GAMES: list[str | Enum] = ["games"]
+TAG_BGG_GAMES: list[str | Enum] = ["BGG games"]
+TAG_CUSTOM_GAMES: list[str | Enum] = ["custom games"]
+TAG_GAME_GALLERY: list[str | Enum] = ["game gallery"]
+TAG_3D_MODELS: list[str | Enum] = ["3D models"]
 
 
 @games_router.get(
@@ -268,10 +269,10 @@ async def submit_3d_model(
         rotations,
     )
     db.expire_all()
-    game = game_service.get_game_by_slug(db, slug)
-    if game is None:
+    refreshed_game = game_service.get_game_by_slug(db, slug)
+    if refreshed_game is None:
         raise ApiError.not_found(ErrorCode.GAME_NOT_FOUND)
-    return game_service.to_detail(game)
+    return game_service.to_detail(refreshed_game)
 
 
 @games_router.delete(

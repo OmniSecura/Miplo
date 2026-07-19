@@ -123,7 +123,9 @@ async def _sync_ids(
     return succeeded, failed, False
 
 
-async def nightly_sync(db: Session, budget_seconds: int | None = None) -> dict[str, int | float | bool]:
+async def nightly_sync(
+    db: Session, budget_seconds: int | None = None
+) -> dict[str, int | float | bool]:
     """Wzbogaca katalog w trzech priorytetach i nigdy nie przekracza budżetu."""
     if not settings.BGG_API_TOKEN:
         raise ApiError(503, ErrorCode.BGG_NOT_CONFIGURED)

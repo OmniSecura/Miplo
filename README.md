@@ -1,5 +1,7 @@
 # Miplo
 
+[![CI](https://github.com/OmniSecura/Miplo/actions/workflows/ci.yml/badge.svg)](https://github.com/OmniSecura/Miplo/actions/workflows/ci.yml)
+
 Aplikacja dla planszówkowiczów: wizualna półka 3D z grami, kojarzenie graczy
 z okolicy i (docelowo) wypożyczanie gier między użytkownikami.
 
@@ -36,20 +38,26 @@ miplo/
 ├── docs/                  # dokumentacja techniczna
 │   ├── architecture.md
 │   └── decisions/         # ADR – zapisy decyzji i dlaczego
-├── backend/               # FastAPI (monolit modularny)
-│   └── app/
-│       ├── core/          # config, baza, auth
-│       └── games/         # pierwsza domena: proxy/cache do BGG
+├── services/              # FastAPI (monolit modularny)
+│   ├── app/
+│   │   ├── core/          # config, baza, auth, bezpieczeństwo
+│   │   ├── games/         # katalog BGG/custom i moderacja mediów
+│   │   ├── shelf/         # półki użytkowników
+│   │   └── ratings/       # oceny i recenzje społeczności
+│   ├── tests/
+│   └── Dockerfile
+└── docker-compose.yml     # lokalne API + PostgreSQL + Redis
 ```
 
-## Uruchomienie (backend)
+## Development
 
-> Uzupełnić, gdy backend ruszy. Na razie szkielet.
+Pełna instrukcja: [docs/development.md](docs/development.md). Konfiguracja pipeline'u
+i ochrony `main`: [docs/CI.md](docs/CI.md).
 
-```bash
-cd backend
-python -m venv .venv && source .venv/bin/activate
-pip install -e .
-cp .env.example .env    # uzupełnij własne wartości
-uvicorn app.main:app --reload
+Szybki start:
+
+```powershell
+uv sync --project services --all-extras --no-install-project
+docker compose up -d db redis
+services\.venv\Scripts\uvicorn.exe services.app.server:app --reload
 ```

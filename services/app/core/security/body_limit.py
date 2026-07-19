@@ -39,7 +39,8 @@ class BodySizeLimitMiddleware:
 
     async def __call__(self, scope, receive, send) -> None:
         if scope["type"] != "http" or scope.get("method") not in _METHODS_WITH_BODY:
-            return await self.app(scope, receive, send)
+            await self.app(scope, receive, send)
+            return
 
         content_length = None
         is_multipart = False
@@ -76,17 +77,19 @@ class BodySizeLimitMiddleware:
         if declared > limit:
             return await self._reject(send, 413, limit_error)
 
-        return await self.app(scope, receive, send)
+        await self.app(scope, receive, send)
 
     @staticmethod
     async def _reject(send, status: int, error_code: ErrorCode) -> None:
         body = json.dumps({"detail": {"error_code": error_code.value}}).encode()
-        await send({
-            "type": "http.response.start",
-            "status": status,
-            "headers": [
-                (b"content-type", b"application/json"),
-                (b"content-length", str(len(body)).encode()),
-            ],
-        })
+        await send(
+            {
+                "type": "http.response.start",
+                "status": status,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode()),
+                ],
+            }
+        )
         await send({"type": "http.response.body", "body": body})

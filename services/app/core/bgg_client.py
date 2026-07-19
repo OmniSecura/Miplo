@@ -8,7 +8,11 @@ import time
 import weakref
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+from typing import cast
 from urllib.parse import urlsplit
+
+# Import służy wyłącznie do typowania; wszystkie dane są parsowane przez defusedxml.
+from xml.etree.ElementTree import Element  # nosec B405
 
 import httpx
 from defusedxml import ElementTree as ET
@@ -111,7 +115,7 @@ def _headers() -> dict[str, str]:
     }
 
 
-def _safe_int(element: ET.Element | None, attr: str = "value") -> int | None:
+def _safe_int(element: Element | None, attr: str = "value") -> int | None:
     if element is None:
         return None
     raw = element.get(attr)
@@ -121,7 +125,7 @@ def _safe_int(element: ET.Element | None, attr: str = "value") -> int | None:
         return None
 
 
-def _safe_decimal(element: ET.Element | None, attr: str = "value") -> Decimal | None:
+def _safe_decimal(element: Element | None, attr: str = "value") -> Decimal | None:
     if element is None:
         return None
     raw = element.get(attr)
@@ -132,7 +136,7 @@ def _safe_decimal(element: ET.Element | None, attr: str = "value") -> Decimal | 
     return value if value is not None and value >= 0 else None
 
 
-def _primary_name(item: ET.Element) -> str:
+def _primary_name(item: Element) -> str:
     primary = item.find("name[@type='primary']")
     if primary is None:
         primary = item.find("name")
@@ -196,9 +200,14 @@ async def _throttled_request_once(
     state = _runtime_state()
     async with state.semaphore:
         async with state.interval_lock:
-            elapsed = time.monotonic() - state.last_request_at
-            wait = settings.BGG_MIN_REQUEST_INTERVAL - elapsed
-            if wait > 0:
+            # asyncio.sleep może obudzić coroutine minimalnie za wcześnie
+            # (szczególnie na Windows). Pętla gwarantuje rzeczywisty minimalny
+            # odstęp, a więc nie wypuszcza krótkich burstów do BGG.
+            while True:
+                elapsed = time.monotonic() - state.last_request_at
+                wait = settings.BGG_MIN_REQUEST_INTERVAL - elapsed
+                if wait <= 0:
+                    break
                 await asyncio.sleep(wait)
             state.last_request_at = time.monotonic()
         return await _request_once(client, url, params)
@@ -210,7 +219,7 @@ async def _throttled_get_xml(
     params: dict[str, str],
     *,
     not_found_code: ErrorCode | None = None,
-) -> ET.Element:
+) -> Element:
     """Pobiera XML z retry; każda próba przechodzi przez globalny throttle."""
     url = f"{settings.BGG_API_BASE.rstrip('/')}/{path.lstrip('/')}"
     for attempt in range(len(_RETRY_DELAYS) + 1):
@@ -258,7 +267,7 @@ async def _throttled_get_xml(
             raise ApiError(502, ErrorCode.BGG_UNAVAILABLE)
 
         try:
-            return ET.fromstring(payload)
+            return cast(Element, ET.fromstring(payload))
         except (ET.ParseError, DefusedXmlException):
             logger.warning("BGG zwrócił niepoprawny XML dla %s", path)
             raise ApiError(502, ErrorCode.BGG_UNAVAILABLE)
@@ -272,7 +281,7 @@ async def _get_xml(
     params: dict[str, str],
     *,
     not_found_code: ErrorCode | None = None,
-) -> ET.Element:
+) -> Element:
     """Kompatybilna nazwa wewnętrzna; nie omija throttlingu."""
     return await _throttled_get_xml(
         client,
@@ -305,7 +314,7 @@ async def search(query: str) -> list[BggSearchResult]:
     return result
 
 
-def _parse_game_item(item: ET.Element) -> BggGameData | None:
+def _parse_game_item(item: Element) -> BggGameData | None:
     try:
         bgg_id = int(item.get("id", ""))
     except ValueError:
@@ -317,11 +326,7 @@ def _parse_game_item(item: ET.Element) -> BggGameData | None:
     description_element = item.find("description")
     image_element = item.find("image")
     ratings = item.find(".//statistics/ratings")
-    boardgame_rank = (
-        ratings.find("ranks/rank[@name='boardgame']")
-        if ratings is not None
-        else None
-    )
+    boardgame_rank = ratings.find("ranks/rank[@name='boardgame']") if ratings is not None else None
     return BggGameData(
         bgg_id=bgg_id,
         title=title,
@@ -333,16 +338,10 @@ def _parse_game_item(item: ET.Element) -> BggGameData | None:
         max_players=_safe_int(item.find("maxplayers")),
         playing_time=_safe_int(item.find("playingtime")),
         rating=_safe_decimal(ratings.find("average") if ratings is not None else None),
-        weight=_safe_decimal(
-            ratings.find("averageweight") if ratings is not None else None
-        ),
-        users_rated=_safe_int(
-            ratings.find("usersrated") if ratings is not None else None
-        ),
+        weight=_safe_decimal(ratings.find("averageweight") if ratings is not None else None),
+        users_rated=_safe_int(ratings.find("usersrated") if ratings is not None else None),
         bgg_rank=_safe_int(boardgame_rank),
-        cover_url=_safe_cover_url(
-            image_element.text if image_element is not None else None
-        ),
+        cover_url=_safe_cover_url(image_element.text if image_element is not None else None),
         categories=[
             link.get("value", "").strip()
             for link in item.findall("link[@type='boardgamecategory']")
@@ -388,6 +387,7 @@ async def fetch_game_deduped(bgg_id: int) -> BggGameData:
     async with state.in_flight_lock:
         task = state.in_flight.get(bgg_id)
         if task is None:
+
             async def fetch_and_cleanup() -> BggGameData:
                 try:
                     return await fetch_game(bgg_id)

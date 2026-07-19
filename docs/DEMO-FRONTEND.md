@@ -483,4 +483,3 @@ obiektów z prawdziwym Firebase Auth w sposób, który mógłby trafić na produ
 - Profil nie pokazuje wewnętrznych identyfikatorów.
 - Nie ma panelu moderatora, klucza admina ani narzędzia importu katalogu.
 - Interfejs jest responsywny, dostępny i ma komplet stanów loading/empty/error.
-

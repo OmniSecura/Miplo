@@ -23,15 +23,15 @@ from services.app.games.enums import GameLanguage
 from services.app.games.models import Game, GameBarcode, GameImage, GameType, game_game_types
 from services.app.games.schemas import (
     BarcodeSubmission,
+    GalleryImageCreate,
+    GameBarcodePublic,
     GameCreate,
     GameDetail,
     GameImagePublic,
-    GameBarcodePublic,
     GameImageSubmission,
     GameListItem,
     GameSearchResult,
     GameUpdate,
-    GalleryImageCreate,
     PaginatedGames,
 )
 from services.app.games.services import cover_service, gallery_service
@@ -176,8 +176,7 @@ def _is_valid_barcode(value: str) -> bool:
         return False
     body, supplied_check = value[:-1], int(value[-1])
     weighted_sum = sum(
-        int(digit) * (3 if index % 2 == 0 else 1)
-        for index, digit in enumerate(reversed(body))
+        int(digit) * (3 if index % 2 == 0 else 1) for index, digit in enumerate(reversed(body))
     )
     expected_check = (10 - weighted_sum % 10) % 10
     return supplied_check == expected_check
@@ -206,9 +205,7 @@ def to_list_item(game: Game) -> GameListItem:
         users_rated=game.users_rated,
         is_expansion=game.is_expansion,
         miplo_rating=(
-            game.miplo_rating
-            if game.miplo_ratings_count >= MIPLO_MIN_RATINGS_FOR_DISPLAY
-            else None
+            game.miplo_rating if game.miplo_ratings_count >= MIPLO_MIN_RATINGS_FOR_DISPLAY else None
         ),
         miplo_ratings_count=game.miplo_ratings_count,
         miplo_reviews_count=game.miplo_reviews_count,
@@ -443,9 +440,7 @@ async def get_or_fetch_games_batch(
     existing = db.scalars(select(Game).where(Game.bgg_id.in_(unique_ids))).all()
     result = {game.bgg_id: game for game in existing if game.bgg_id is not None}
     stale_ids = [
-        item_id
-        for item_id in unique_ids
-        if item_id not in result or is_stale(result[item_id])
+        item_id for item_id in unique_ids if item_id not in result or is_stale(result[item_id])
     ]
     if stale_ids:
         remote_games = await bgg_client.fetch_games(stale_ids)
@@ -481,9 +476,7 @@ def _get_game_by_slug_for_update(db: Session, slug_or_title: str) -> Game | None
     normalized = normalize_slug(slug_or_title)
     if not normalized:
         return None
-    return db.scalar(
-        select(Game).where(Game.slug == normalized).with_for_update()
-    )
+    return db.scalar(select(Game).where(Game.slug == normalized).with_for_update())
 
 
 def get_game_by_barcode(db: Session, barcode: str) -> Game | None:
@@ -591,12 +584,15 @@ def list_games(
         query = query.where(Game.is_expansion.is_(False))
 
     total = db.scalar(select(func.count()).select_from(query.distinct().subquery())) or 0
-    games = db.scalars(
-        query.distinct()
-        .order_by(Game.bgg_rank.is_(None), Game.bgg_rank, Game.title)
-        .offset((page - 1) * size)
-        .limit(size)
-    ).all()
+    games = (
+        db.scalars(
+            query.order_by(Game.bgg_rank.is_(None), Game.bgg_rank, Game.title)
+            .offset((page - 1) * size)
+            .limit(size)
+        )
+        .unique()
+        .all()
+    )
     return PaginatedGames(
         items=[to_list_item(game) for game in games],
         total=total,
@@ -775,9 +771,10 @@ async def submit_gallery_image(
     if not game.is_verified:
         _assert_custom_owner(game, current_user)
 
-    image_count = db.scalar(
-        select(func.count()).select_from(GameImage).where(GameImage.game_id == game.id)
-    ) or 0
+    image_count = (
+        db.scalar(select(func.count()).select_from(GameImage).where(GameImage.game_id == game.id))
+        or 0
+    )
     if image_count >= 12:
         raise ApiError.conflict(
             ErrorCode.GALLERY_LIMIT_REACHED,

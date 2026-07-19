@@ -1,6 +1,6 @@
 # 0009 — Osobna moderacja gry, okładki, galerii, modelu 3D i barcode
 
-Data: 2026-07-17  
+Data: 2026-07-17
 Status: przyjęte
 
 ## Kontekst

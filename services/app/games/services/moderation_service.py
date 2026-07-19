@@ -12,8 +12,8 @@ from services.app.games.models import Game, GameBarcode, GameImage
 from services.app.games.schemas import (
     GameDetail,
     PendingBarcodeModeration,
-    PendingImageModeration,
     PendingGameModeration,
+    PendingImageModeration,
     PendingModelModeration,
 )
 from services.app.games.services import box_generator_service, cover_service, gallery_service
@@ -162,9 +162,7 @@ def list_pending_barcodes(
 
 def approve_barcode(db: Session, public_id: UUID) -> None:
     proposal = db.scalar(
-        select(GameBarcode)
-        .where(GameBarcode.public_id == public_id)
-        .with_for_update()
+        select(GameBarcode).where(GameBarcode.public_id == public_id).with_for_update()
     )
     if proposal is None:
         raise ApiError.not_found(ErrorCode.BARCODE_PROPOSAL_NOT_FOUND)
@@ -197,9 +195,7 @@ def approve_barcode(db: Session, public_id: UUID) -> None:
 
 def reject_barcode(db: Session, public_id: UUID) -> None:
     proposal = db.scalar(
-        select(GameBarcode)
-        .where(GameBarcode.public_id == public_id)
-        .with_for_update()
+        select(GameBarcode).where(GameBarcode.public_id == public_id).with_for_update()
     )
     if proposal is None:
         raise ApiError.not_found(ErrorCode.BARCODE_PROPOSAL_NOT_FOUND)
@@ -222,12 +218,15 @@ def list_pending_models(db: Session, limit: int = 100) -> list[PendingModelModer
     result: list[PendingModelModeration] = []
     for game in games:
         submitter = db.get(User, game.model_submitted_by_id) if game.model_submitted_by_id else None
+        candidate_path = game.model_candidate_path
+        if candidate_path is None:  # query excludes it; guard keeps storage call explicit
+            continue
         result.append(
             PendingModelModeration(
                 game_slug=game.slug,
                 game_title=game.title,
                 model_status=game.model_status or "awaiting_review",
-                preview_url=box_generator_service.signed_preview_url(game.model_candidate_path),
+                preview_url=box_generator_service.signed_preview_url(candidate_path),
                 submitted_by_tag=submitter.tag if submitter else None,
                 submitted_at=game.model_submitted_at,
             )

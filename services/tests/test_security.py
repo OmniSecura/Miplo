@@ -50,7 +50,9 @@ class SecurityRegressionTests(unittest.TestCase):
         bearer = HTTPAuthorizationCredentials(scheme="Bearer", credentials="token")
         db = MagicMock()
         with (
-            patch.object(auth.firebase_auth, "verify_id_token", return_value={"uid": "uid-1"}) as verify,
+            patch.object(
+                auth.firebase_auth, "verify_id_token", return_value={"uid": "uid-1"}
+            ) as verify,
             patch.object(auth.user_service, "get_by_firebase_uid", return_value=user),
         ):
             result = auth.get_current_user_allow_inactive(self._request(), bearer, db)
@@ -76,7 +78,9 @@ class SecurityRegressionTests(unittest.TestCase):
         with (
             patch.object(users_router_module, "prepare_firebase_account_deletion", parent.prepare),
             patch.object(users_router_module.user_service, "delete_account", parent.delete_local),
-            patch.object(users_router_module, "finalize_firebase_account_deletion", parent.finalize),
+            patch.object(
+                users_router_module, "finalize_firebase_account_deletion", parent.finalize
+            ),
         ):
             users_router_module.delete_my_account.__wrapped__(None, None, user, db)
         self.assertEqual(
@@ -88,8 +92,12 @@ class SecurityRegressionTests(unittest.TestCase):
         user = User(firebase_uid="uid-delete", tag="delete_user", is_active=True)
         with (
             patch.object(users_router_module, "prepare_firebase_account_deletion"),
-            patch.object(users_router_module.user_service, "delete_account", side_effect=RuntimeError),
-            patch.object(users_router_module, "restore_firebase_account_after_failed_deletion") as restore,
+            patch.object(
+                users_router_module.user_service, "delete_account", side_effect=RuntimeError
+            ),
+            patch.object(
+                users_router_module, "restore_firebase_account_after_failed_deletion"
+            ) as restore,
             patch.object(users_router_module, "finalize_firebase_account_deletion") as finalize,
         ):
             with self.assertRaises(RuntimeError):
@@ -135,7 +143,10 @@ class SecurityRegressionTests(unittest.TestCase):
                 return None
 
             client = TestClient(app, raise_server_exceptions=False)
-            statuses = [client.get("/protected").status_code for _ in range(3)]
+            try:
+                statuses = [client.get("/protected").status_code for _ in range(3)]
+            finally:
+                client.close()
         finally:
             settings.GLOBAL_IP_RATE_LIMIT = previous
         self.assertEqual(statuses, [401, 401, 429])
@@ -160,10 +171,14 @@ class SecurityRegressionTests(unittest.TestCase):
         def private() -> dict:
             return {"ok": True}
 
-        response = TestClient(app).get(
-            "/api/me",
-            headers={"Authorization": "Bearer test"},
-        )
+        client = TestClient(app)
+        try:
+            response = client.get(
+                "/api/me",
+                headers={"Authorization": "Bearer test"},
+            )
+        finally:
+            client.close()
         self.assertEqual(response.headers["cache-control"], "no-store")
         self.assertEqual(response.headers["x-content-type-options"], "nosniff")
         self.assertEqual(response.headers["x-frame-options"], "DENY")

@@ -19,8 +19,8 @@ from google.cloud.exceptions import NotFound
 from PIL import Image, ImageOps, UnidentifiedImageError
 from starlette.concurrency import run_in_threadpool
 
-from services.app.core.database import db_session
 from services.app.core.config import settings
+from services.app.core.database import db_session
 from services.app.core.errors import ApiError, ErrorCode
 from services.app.core.storage import get_bucket
 from services.app.games.models import Game
@@ -110,10 +110,17 @@ async def read_validated_sides(files: dict[str, UploadFile | None]) -> dict[str,
         try:
             await run_in_threadpool(_validate_image, raw)
         except ApiError as exc:
-            details = dict(exc.detail.get("details", {}))
+            detail: dict[str, object] = exc.detail if isinstance(exc.detail, dict) else {}
+            raw_details = detail.get("details", {})
+            details = dict(raw_details) if isinstance(raw_details, dict) else {}
             details["side"] = name
+            raw_code = detail.get("error_code", ErrorCode.INVALID_FILE_TYPE.value)
+            try:
+                error_code = ErrorCode(raw_code)
+            except (TypeError, ValueError):
+                error_code = ErrorCode.INVALID_FILE_TYPE
             raise ApiError.bad_request(
-                ErrorCode(exc.detail["error_code"]),
+                error_code,
                 details=details,
             )
         result[name] = raw
@@ -135,7 +142,7 @@ def _texture_jpeg(
     physical_height: float,
     rotation_clockwise: int = 0,
 ) -> bytes:
-    image = Image.open(io.BytesIO(raw))
+    image: Image.Image = Image.open(io.BytesIO(raw))
     image.load()
     image = ImageOps.exif_transpose(image).convert("RGB")
 
@@ -358,7 +365,7 @@ def _seam_ring(
     """Czarny spód rantu wieka zasłaniający prześwit między dwiema częściami."""
     x, y = base_half_width, base_half_height
     lx, ly = lid_half_width, lid_half_height
-    uv = [(0, 0), (0, 1), (1, 1), (1, 0)]
+    uv: list[tuple[float, float]] = [(0.0, 0.0), (0.0, 1.0), (1.0, 1.0), (1.0, 0.0)]
     return [
         _primitive(
             builder,
@@ -409,7 +416,9 @@ def build_glb(
         "left": _texture_jpeg(raw_sides["left"], depth_cm, height_cm, rotations.get("left", 0)),
         "right": _texture_jpeg(raw_sides["right"], depth_cm, height_cm, rotations.get("right", 0)),
         "top": _texture_jpeg(raw_sides["top"], width_cm, depth_cm, rotations.get("top", 0)),
-        "bottom": _texture_jpeg(raw_sides["bottom"], width_cm, depth_cm, rotations.get("bottom", 0)),
+        "bottom": _texture_jpeg(
+            raw_sides["bottom"], width_cm, depth_cm, rotations.get("bottom", 0)
+        ),
     }
 
     # glTF używa metrów. W bazie trzymamy centymetry.
@@ -573,10 +582,14 @@ def _delete(path: str | None) -> None:
 
 
 def signed_preview_url(path: str) -> str:
-    return get_bucket().blob(path).generate_signed_url(
-        version="v4",
-        expiration=timedelta(minutes=15),
-        method="GET",
+    return str(
+        get_bucket()
+        .blob(path)
+        .generate_signed_url(
+            version="v4",
+            expiration=timedelta(minutes=15),
+            method="GET",
+        )
     )
 
 
@@ -667,7 +680,9 @@ async def generate_and_upload(
             try:
                 _delete(candidate_path)
             except Exception:
-                logger.warning("Cleanup nieudanego modelu %d nie powiódł się", game_id, exc_info=True)
+                logger.warning(
+                    "Cleanup nieudanego modelu %d nie powiódł się", game_id, exc_info=True
+                )
         try:
             _set_failed(game_id, job_id)
         except Exception:

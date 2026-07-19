@@ -9,6 +9,7 @@ import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from itertools import pairwise
 from unittest.mock import AsyncMock, patch
 
 if "services.app.core.database" not in sys.modules:
@@ -94,7 +95,7 @@ class BggSyncTests(unittest.TestCase):
 
         self.assertLessEqual(max_active, 2)
         self.assertEqual(len(starts), 50)
-        self.assertTrue(all(right - left >= 0.003 for left, right in zip(starts, starts[1:])))
+        self.assertTrue(all(right - left >= 0.003 for left, right in pairwise(starts)))
 
     def test_twenty_parallel_fetches_of_one_game_use_one_request(self) -> None:
         result = bgg_client.BggGameData(
@@ -120,9 +121,7 @@ class BggSyncTests(unittest.TestCase):
         fetch = AsyncMock(side_effect=fake_fetch)
 
         async def run():
-            return await asyncio.gather(
-                *(bgg_client.fetch_game_deduped(224517) for _ in range(20))
-            )
+            return await asyncio.gather(*(bgg_client.fetch_game_deduped(224517) for _ in range(20)))
 
         with patch.object(bgg_client, "fetch_game", new=fetch):
             received = asyncio.run(run())
@@ -144,8 +143,19 @@ class BggSyncTests(unittest.TestCase):
         self.assertTrue(all(isinstance(item, ApiError) for item in results))
 
         recovered = bgg_client.BggGameData(
-            7, "Recovered", None, None, None, None, None,
-            None, None, None, None, None, [],
+            7,
+            "Recovered",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            [],
         )
         with patch.object(bgg_client, "fetch_game", new=AsyncMock(return_value=recovered)):
             self.assertEqual(asyncio.run(bgg_client.fetch_game_deduped(7)).title, "Recovered")
@@ -203,8 +213,7 @@ class BggSyncTests(unittest.TestCase):
         result = catalog_import_service.import_catalog(
             self.db,
             _csv_upload(
-                "1,Changed title,2024,2,8.2,8.70,9999,1\n"
-                "2,New game,2025,10,7.0,7.50,500,0\n"
+                "1,Changed title,2024,2,8.2,8.70,9999,1\n2,New game,2025,10,7.0,7.50,500,0\n"
             ),
             CatalogImportMode.UPDATE,
         )
@@ -302,7 +311,9 @@ class BggSyncTests(unittest.TestCase):
     def test_nightly_sync_processes_user_games_before_ranked_catalog(self) -> None:
         user = User(firebase_uid="sync-user", tag="sync_user", is_active=True)
         games = [
-            Game(bgg_id=1, slug="shelf", title="Shelf", bgg_rank=100, source="bgg", is_verified=True),
+            Game(
+                bgg_id=1, slug="shelf", title="Shelf", bgg_rank=100, source="bgg", is_verified=True
+            ),
             Game(
                 bgg_id=2,
                 slug="rated",

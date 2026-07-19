@@ -169,7 +169,9 @@ def register_error_handlers(app: FastAPI) -> None:
     """
 
     async def _internal_error_handler(request: Request, exc: Exception) -> JSONResponse:
-        logger.exception("Nieobsłużony wyjątek w %s %s", request.method, request.url.path, exc_info=exc)
+        logger.exception(
+            "Nieobsłużony wyjątek w %s %s", request.method, request.url.path, exc_info=exc
+        )
         return JSONResponse(
             status_code=500,
             content={"detail": {"error_code": ErrorCode.INTERNAL_ERROR.value}},
@@ -216,9 +218,7 @@ def register_error_handlers(app: FastAPI) -> None:
                 429: ErrorCode.RATE_LIMIT_EXCEEDED,
             }
             fallback = (
-                ErrorCode.INTERNAL_ERROR
-                if exc.status_code >= 500
-                else ErrorCode.VALIDATION_ERROR
+                ErrorCode.INTERNAL_ERROR if exc.status_code >= 500 else ErrorCode.VALIDATION_ERROR
             )
             detail = {"error_code": code_by_status.get(exc.status_code, fallback).value}
         return JSONResponse(
@@ -227,6 +227,8 @@ def register_error_handlers(app: FastAPI) -> None:
             headers=exc.headers,
         )
 
-    app.add_exception_handler(RequestValidationError, _validation_error_handler)
-    app.add_exception_handler(StarletteHTTPException, _http_error_handler)
+    # Starlette types handlers contravariantly as Exception, while runtime dispatch
+    # intentionally provides the concrete registered exception class.
+    app.add_exception_handler(RequestValidationError, _validation_error_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(StarletteHTTPException, _http_error_handler)  # type: ignore[arg-type]
     app.add_exception_handler(Exception, _internal_error_handler)

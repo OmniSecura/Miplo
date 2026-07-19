@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     Boolean,
@@ -23,6 +24,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from services.app.core.database import Base
 
+if TYPE_CHECKING:
+    from services.app.games.models import Game
+    from services.app.users.models import User
+
 
 class ShelfItem(Base):
     __tablename__ = "shelf_items"
@@ -33,8 +38,7 @@ class ShelfItem(Base):
             name="ck_shelf_items_condition",
         ),
         CheckConstraint(
-            "lending_deposit IS NULL OR "
-            "(lending_deposit >= 0 AND lending_deposit <= 9999)",
+            "lending_deposit IS NULL OR (lending_deposit >= 0 AND lending_deposit <= 9999)",
             name="ck_shelf_items_deposit",
         ),
         CheckConstraint(

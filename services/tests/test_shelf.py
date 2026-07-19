@@ -24,6 +24,7 @@ from services.app.core.database import Base, SessionLocal, engine
 from services.app.core.errors import ApiError, ErrorCode
 from services.app.games.models import Game
 from services.app.games.services import game_service
+from services.app.ratings.models import GameRating
 from services.app.shelf.enums import ShelfCondition, ShelfSort
 from services.app.shelf.models import ShelfItem
 from services.app.shelf.schemas import (
@@ -32,7 +33,6 @@ from services.app.shelf.schemas import (
     ShelfItemUpdate,
 )
 from services.app.shelf.services import shelf_service
-from services.app.ratings.models import GameRating
 from services.app.users.models import User
 
 
@@ -45,10 +45,9 @@ class ShelfServiceTests(unittest.TestCase):
     def tearDownClass(cls) -> None:
         engine.dispose()
         database_path = str(engine.url.database or "")
-        if (
-            os.path.dirname(database_path) == tempfile.gettempdir()
-            and os.path.basename(database_path) in {"miplo-shelf-tests.db", "miplo-games-tests.db"}
-        ):
+        if os.path.dirname(database_path) == tempfile.gettempdir() and os.path.basename(
+            database_path
+        ) in {"miplo-shelf-tests.db", "miplo-games-tests.db"}:
             try:
                 os.unlink(database_path)
             except FileNotFoundError:
@@ -231,9 +230,7 @@ class ShelfServiceTests(unittest.TestCase):
         self.assertIsNone(anonymous.my_shelf_item)
 
     def test_optional_auth_is_anonymous_only_when_header_is_absent(self) -> None:
-        anonymous_request = Request(
-            {"type": "http", "method": "GET", "path": "/", "headers": []}
-        )
+        anonymous_request = Request({"type": "http", "method": "GET", "path": "/", "headers": []})
         self.assertIsNone(get_current_user_optional(anonymous_request, None, self.db))
         malformed_request = Request(
             {

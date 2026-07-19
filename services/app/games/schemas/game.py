@@ -22,7 +22,6 @@ from pydantic import (
 from services.app.games.enums import GameLanguage
 from services.app.shelf.schemas import ShelfItemResponse
 
-
 _BIDI_CONTROLS = frozenset("\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069")
 
 
@@ -80,7 +79,9 @@ GameDescription = Annotated[
     BeforeValidator(_plain_text),
     StringConstraints(strip_whitespace=True, max_length=2000),
 ]
-GameTypesJson = Annotated[str, StringConstraints(strip_whitespace=True, min_length=2, max_length=2000)]
+GameTypesJson = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=2, max_length=2000)
+]
 BarcodeText = Annotated[
     str,
     StringConstraints(
@@ -212,11 +213,14 @@ class GameUpdate(BaseModel):
 
 class GalleryImageCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    caption: Annotated[
-        str,
-        BeforeValidator(_plain_single_line),
-        StringConstraints(strip_whitespace=True, min_length=1, max_length=120),
-    ] | None = None
+    caption: (
+        Annotated[
+            str,
+            BeforeValidator(_plain_single_line),
+            StringConstraints(strip_whitespace=True, min_length=1, max_length=120),
+        ]
+        | None
+    ) = None
 
     @classmethod
     def as_form(cls, caption: str | None = Form(None)) -> "GalleryImageCreate":

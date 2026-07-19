@@ -50,7 +50,7 @@ async def _read_limited(file: UploadFile) -> bytes:
 
 def _optimize(data: bytes) -> bytes:
     try:
-        image = Image.open(io.BytesIO(data))
+        image: Image.Image = Image.open(io.BytesIO(data))
         if image.format not in ALLOWED_IMAGE_FORMATS:
             raise ApiError.bad_request(ErrorCode.INVALID_FILE_TYPE)
         width, height = image.size
@@ -67,9 +67,7 @@ def _optimize(data: bytes) -> bytes:
         raise ApiError.bad_request(ErrorCode.INVALID_FILE_TYPE)
 
     image = ImageOps.exif_transpose(image)
-    if image.mode in ("RGBA", "LA", "PA") or (
-        image.mode == "P" and "transparency" in image.info
-    ):
+    if image.mode in ("RGBA", "LA", "PA") or (image.mode == "P" and "transparency" in image.info):
         rgba = image.convert("RGBA")
         background = Image.new("RGB", rgba.size, (255, 255, 255))
         background.paste(rgba, mask=rgba.getchannel("A"))
@@ -127,10 +125,14 @@ async def upload_candidate(game_id: int, webp: bytes) -> str:
 
 
 def signed_preview_url(path: str) -> str:
-    return get_bucket().blob(path).generate_signed_url(
-        version="v4",
-        expiration=timedelta(minutes=15),
-        method="GET",
+    return str(
+        get_bucket()
+        .blob(path)
+        .generate_signed_url(
+            version="v4",
+            expiration=timedelta(minutes=15),
+            method="GET",
+        )
     )
 
 

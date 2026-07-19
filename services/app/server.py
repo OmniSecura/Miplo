@@ -10,13 +10,12 @@ from services.app.core.auth import init_firebase
 from services.app.core.config import APP_DESCRIPTION, APP_NAME, APP_VERSION, settings
 from services.app.core.database import create_all_for_local, ping
 from services.app.core.errors import register_error_handlers
-from services.app.core.security.body_limit import BodySizeLimitMiddleware
 from services.app.core.security.audit_log import AdminAuditLogMiddleware
+from services.app.core.security.body_limit import BodySizeLimitMiddleware
 from services.app.core.security.global_limiter import GlobalIpRateLimitMiddleware
 from services.app.core.security.headers import SecurityHeadersMiddleware
 from services.app.core.security.limiter import READ_LIMIT, limiter, register_rate_limiting
 from services.app.core.storage import init_storage
-
 
 OPENAPI_TAGS = [
     {"name": "system", "description": "Stan aplikacji i zależności."},
@@ -104,7 +103,7 @@ def create_app() -> FastAPI:
     @app.get("/docs", include_in_schema=False)
     async def custom_swagger_ui():
         return get_swagger_ui_html(
-            openapi_url=app.openapi_url,
+            openapi_url=app.openapi_url or "/openapi.json",
             title=f"{APP_NAME} — Swagger UI",
         )
 

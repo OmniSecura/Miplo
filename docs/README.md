@@ -20,6 +20,8 @@ przyjęto konkretne rozwiązania.
 | [`ERRORS.md`](ERRORS.md) | stabilny kontrakt `error_code` dla frontendu                |
 | [`SECURITY-AUDIT.md`](SECURITY-AUDIT.md) | wynik audytu bezpieczeństwa z 18.07.2026 |
 | [`operations.md`](operations.md) | harmonogram importu CSV i nightly sync BGG |
+| [`development.md`](development.md) | lokalny setup, Docker Compose i narzędzia jakości |
+| [`CI.md`](CI.md) | GitHub Actions, Dependabot i ochrona brancha `main` |
 | [`decisions/README.md`](decisions/README.md) | indeks przyjętych decyzji architektonicznych                |
 
 ## Aktualny zakres
@@ -76,9 +78,8 @@ Docelowo produkcyjne migracje powinny zostać przeniesione do Alembic.
 ## Weryfikacja
 
 ```powershell
-services\.venv\Scripts\python.exe -B -m unittest discover -s services/tests -v
+uv run --project services pytest services/tests
 ```
 
-Aktualny zestaw obejmuje 76 testów (31 `games`, 12 `shelf`, 13 `ratings`,
-8 regresji bezpieczeństwa i 12 synchronizacji BGG) bez prawdziwych połączeń
-z BGG i Firebase.
+Testy nie wykonują prawdziwych połączeń z BGG ani Firebase. Lokalnie korzystają
+z SQLite, a job CI uruchamia ten sam zestaw na PostgreSQL 16 i Redis 7.

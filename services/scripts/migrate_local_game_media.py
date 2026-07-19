@@ -14,7 +14,6 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
-
 GAME_COLUMNS = (
     "id",
     "bgg_id",
@@ -195,17 +194,11 @@ def migrate(database_path: Path) -> tuple[bool, Path | None]:
         needs_barcodes = not _columns(connection, "game_barcodes")
         needs_barcode_enum = (
             not needs_barcodes
-            and "language_code IN ('pl', 'en')"
-            not in _table_sql(connection, "game_barcodes")
+            and "language_code IN ('pl', 'en')" not in _table_sql(connection, "game_barcodes")
         )
-        needs_barcode_format = (
-            not needs_barcodes
-            and (
-                "length(barcode) IN (8, 12, 13)"
-                not in _table_sql(connection, "game_barcodes")
-                or "barcode NOT GLOB '*[^0-9]*'"
-                not in _table_sql(connection, "game_barcodes")
-            )
+        needs_barcode_format = not needs_barcodes and (
+            "length(barcode) IN (8, 12, 13)" not in _table_sql(connection, "game_barcodes")
+            or "barcode NOT GLOB '*[^0-9]*'" not in _table_sql(connection, "game_barcodes")
         )
         has_unclassified_barcodes = (
             "barcode" in _columns(connection, "games")
@@ -281,16 +274,12 @@ def migrate(database_path: Path) -> tuple[bool, Path | None]:
             connection.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS ix_games_bgg_id ON games (bgg_id)"
             )
-            connection.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS ix_games_slug ON games (slug)"
-            )
+            connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS ix_games_slug ON games (slug)")
             connection.execute("CREATE INDEX IF NOT EXISTS ix_games_title ON games (title)")
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS ix_games_is_expansion ON games (is_expansion)"
             )
-            connection.execute(
-                "CREATE INDEX IF NOT EXISTS ix_games_bgg_rank ON games (bgg_rank)"
-            )
+            connection.execute("CREATE INDEX IF NOT EXISTS ix_games_bgg_rank ON games (bgg_rank)")
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS ix_games_model_job_id ON games (model_job_id)"
             )
@@ -323,9 +312,7 @@ def migrate(database_path: Path) -> tuple[bool, Path | None]:
                     """
                 )
                 connection.execute("DROP TABLE game_barcodes")
-                connection.execute(
-                    "ALTER TABLE game_barcodes_new RENAME TO game_barcodes"
-                )
+                connection.execute("ALTER TABLE game_barcodes_new RENAME TO game_barcodes")
             else:
                 connection.execute(CREATE_GAME_BARCODES)
             connection.execute(
@@ -337,12 +324,10 @@ def migrate(database_path: Path) -> tuple[bool, Path | None]:
                 "ON game_barcodes (barcode)"
             )
             connection.execute(
-                "CREATE INDEX IF NOT EXISTS ix_game_barcodes_game_id "
-                "ON game_barcodes (game_id)"
+                "CREATE INDEX IF NOT EXISTS ix_game_barcodes_game_id ON game_barcodes (game_id)"
             )
             connection.execute(
-                "CREATE INDEX IF NOT EXISTS ix_game_barcodes_status "
-                "ON game_barcodes (status)"
+                "CREATE INDEX IF NOT EXISTS ix_game_barcodes_status ON game_barcodes (status)"
             )
             violations = connection.execute("PRAGMA foreign_key_check").fetchall()
             if violations:
