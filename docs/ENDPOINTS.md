@@ -279,7 +279,8 @@ Auth: tak. Limit 5/h. `multipart/form-data`:
 - wymagane: `title`, `min_players`, `max_players`, `game_types`,
 - opcjonalne: `description`, `playing_time`, `box_width`,
   `box_height`, `box_depth`, `year_published`, `instruction_url`, `cover`,
-- `game_types` to JSON string, np. `["Euro","Familijna"]`.
+- `game_types` to lista wartości enuma `GameTypeName` — multipart powtarza pole
+  (`game_types=Euro&game_types=Familijna`), Swagger pokazuje multi-select.
 
 Tworzy `source=custom`, `is_verified=false`, automatyczny slug i właściciela
 z tokenu. Opcjonalna okładka jest przepisywana do WEBP 800 px i pozostaje

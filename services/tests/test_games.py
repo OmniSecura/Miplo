@@ -29,7 +29,7 @@ from services.app.core.auth import get_admin_access, get_current_admin
 from services.app.core.config import settings
 from services.app.core.database import Base, SessionLocal, engine
 from services.app.core.errors import ApiError, ErrorCode
-from services.app.games.enums import CatalogImportMode, GameLanguage
+from services.app.games.enums import CatalogImportMode, GameLanguage, GameTypeName
 from services.app.games.models import Game, GameBarcode, GameImage
 from services.app.games.routers.router import submit_3d_model
 from services.app.games.schemas import BarcodeAssign, GalleryImageCreate, GameCreate, GameUpdate
@@ -77,7 +77,7 @@ class GamesServiceTests(unittest.TestCase):
             min_players=2,
             max_players=4,
             playing_time=120,
-            game_types='["Euro", "Ekonomiczna"]',
+            game_types=[GameTypeName.EURO, GameTypeName.EKONOMICZNA],
         )
         return asyncio.run(game_service.create_custom_game(self.db, payload, None, self.user))
 
@@ -251,7 +251,7 @@ class GamesServiceTests(unittest.TestCase):
         common = {
             "min_players": 1,
             "max_players": 2,
-            "game_types": '["Familijna"]',
+            "game_types": [GameTypeName.FAMILIJNA],
         }
         with self.assertRaises(ValidationError):
             GameCreate(title="Gra\nPodmieniona", **common)

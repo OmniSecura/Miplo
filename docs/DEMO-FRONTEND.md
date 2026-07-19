@@ -168,7 +168,10 @@ bez wykonywania osobnego requestu sprawdzającego.
 13. Dodawanie gry custom `/games/new`
    - formularz multipart: tytuł, opis, gracze, czas, rok, typy, wymiary,
      bezpieczny link HTTPS do instrukcji i opcjonalna okładka;
-   - `game_types` wysyłaj jako JSON string, np. `["Euro","Ekonomiczna"]`;
+   - `game_types` wysyłaj jako powtarzane pole multipart z wartościami enuma
+     `GameTypeName` (np. `game_types=Euro`, `game_types=Ekonomiczna`); listę
+     dozwolonych wartości pobierz z OpenAPI (`components.schemas.GameTypeName`)
+     i renderuj jako multi-select;
    - slug generuje backend, nie pokazuj pola slug;
    - po `201` pokaż ekran „Gra oczekuje na moderację”. Nie publikuj jej od razu;
    - aktualnie nie istnieje endpoint „moje zgłoszenia”, więc po odświeżeniu strony

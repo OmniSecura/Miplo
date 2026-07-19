@@ -1,11 +1,9 @@
 """Logika domenowa games: cache BGG, katalog i customowe gry."""
 
-import json
 import logging
 import math
 import threading
 import time
-import unicodedata
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
@@ -19,7 +17,7 @@ from services.app.core import bgg_client
 from services.app.core.config import settings
 from services.app.core.database import db_session
 from services.app.core.errors import ApiError, ErrorCode
-from services.app.games.enums import GameLanguage
+from services.app.games.enums import GameLanguage, GameTypeName
 from services.app.games.models import Game, GameBarcode, GameImage, GameType, game_game_types
 from services.app.games.schemas import (
     BarcodeSubmission,
@@ -60,26 +58,26 @@ BGG_STATIC_UPDATABLE_FIELDS = frozenset(
 BGG_API_FILL_ONLY_FIELDS = frozenset({"rating", "users_rated", "bgg_rank"})
 
 _BGG_CATEGORY_MAP: dict[str, str] = {
-    "Economic": "Euro",
-    "Industry / Manufacturing": "Euro",
-    "City Building": "Euro",
-    "Civilization": "Euro",
-    "Farming": "Euro",
-    "Territory Building": "Euro",
+    "Economic": "Ekonomiczna",
+    "Industry / Manufacturing": "Przemysł / Produkcja",
+    "City Building": "Budowa Miasta",
+    "Civilization": "Cywilizacja",
+    "Farming": "Rolnictwo",
+    "Territory Building": "Budowa Terytorium",
     "Party Game": "Imprezowa",
-    "Humor": "Imprezowa",
+    "Humor": "Humor",
     "Card Game": "Karciana",
     "Dice": "Kościana",
     "Abstract Strategy": "Abstrakcyjna",
     "Wargame": "Wojenna",
-    "Fighting": "Wojenna",
+    "Fighting": "Bitewna",
     "Adventure": "Przygodowa",
-    "Exploration": "Przygodowa",
+    "Exploration": "Eksploracja",
     "Fantasy": "Fantasy",
     "Science Fiction": "Sci-Fi",
     "Horror": "Horror",
     "Puzzle": "Logiczna",
-    "Deduction": "Logiczna",
+    "Deduction": "Dedukcja",
     "Children's Game": "Dla dzieci",
     "Family Game": "Familijna",
     "Trivia": "Quiz",
@@ -87,6 +85,10 @@ _BGG_CATEGORY_MAP: dict[str, str] = {
     "Sports": "Sportowa",
     "Racing": "Wyścigowa",
 }
+
+# Fail-fast na imporcie: mapa może celować wyłącznie w zamknięty katalog typów.
+for _mapped_type in set(_BGG_CATEGORY_MAP.values()):
+    GameTypeName(_mapped_type)
 
 _refresh_lock = threading.Lock()
 _refresh_cooldown: dict[int, float] = {}
@@ -132,42 +134,22 @@ def _get_or_create_game_type(db: Session, name: str) -> GameType:
 
 
 def _resolve_types(db: Session, names: list[str], *, from_bgg: bool = False) -> list[GameType]:
+    """Zwraca typy z zamkniętego katalogu GameTypeName.
+
+    Kategorie BGG spoza mapy są pomijane — katalog typów nigdy nie rośnie
+    poza wartości enuma, niezależnie od tego co zwróci BGG.
+    """
     result: list[GameType] = []
     seen: set[str] = set()
     for raw_name in names:
-        name = _BGG_CATEGORY_MAP.get(raw_name, raw_name) if from_bgg else raw_name
+        name = _BGG_CATEGORY_MAP.get(raw_name) if from_bgg else raw_name
+        if name is None:
+            continue
         type_slug = slugify(name, max_length=80)
         if not type_slug or type_slug in seen:
             continue
         seen.add(type_slug)
         result.append(_get_or_create_game_type(db, name))
-    return result
-
-
-def _parse_game_types(raw: str) -> list[str]:
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        raise ApiError.bad_request(ErrorCode.INVALID_GAME_TYPES)
-    if not isinstance(payload, list) or not 1 <= len(payload) <= 10:
-        raise ApiError.bad_request(ErrorCode.INVALID_GAME_TYPES)
-
-    result: list[str] = []
-    seen: set[str] = set()
-    for value in payload:
-        if not isinstance(value, str):
-            raise ApiError.bad_request(ErrorCode.INVALID_GAME_TYPES)
-        name = value.strip()
-        if not 2 <= len(name) <= 100 or "<" in name or ">" in name:
-            raise ApiError.bad_request(ErrorCode.INVALID_GAME_TYPES)
-        if any(unicodedata.category(char) == "Cc" for char in name):
-            raise ApiError.bad_request(ErrorCode.INVALID_GAME_TYPES)
-        normalized = slugify(name, max_length=80)
-        if normalized and normalized not in seen:
-            seen.add(normalized)
-            result.append(name)
-    if not result:
-        raise ApiError.bad_request(ErrorCode.INVALID_GAME_TYPES)
     return result
 
 
@@ -630,7 +612,7 @@ async def create_custom_game(
     if check_title_exists(db, data.title):
         raise ApiError.conflict(ErrorCode.GAME_TITLE_EXISTS)
 
-    type_names = _parse_game_types(data.game_types)
+    type_names = [item.value for item in data.game_types]
     cover_webp = await cover_service.prepare_cover(cover) if cover is not None else None
     game = Game(
         slug=_generate_slug(db, data.title),
@@ -707,7 +689,7 @@ async def update_custom_game(
         raise ApiError.conflict(ErrorCode.GAME_TITLE_EXISTS)
     type_names = None
     if "game_types" in changes:
-        type_names = _parse_game_types(changes.pop("game_types"))
+        type_names = [GameTypeName(item).value for item in changes.pop("game_types")]
     cover_webp = await cover_service.prepare_cover(cover) if cover is not None else None
 
     if new_title and new_title != game.title:
