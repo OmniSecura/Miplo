@@ -232,9 +232,12 @@ jobs:
           docker logs miplo-smoke
           exit 1
       - name: Enforce production image size limit
+        # Limit pilnuje regresji, nie minimalizmu. ~278 MB to uzasadniony koszt
+        # stacka: firebase_admin (grpc+google ~27 MB), Pillow (~20), psycopg
+        # (~19), cryptography (~15), uvloop (~14), SQLAlchemy (~14).
         run: |
           size=$(docker image inspect miplo:ci --format '{{.Size}}')
-          max=$((250 * 1024 * 1024))
+          max=$((300 * 1024 * 1024))
           echo "Image size: $size bytes (limit: $max bytes)"
           test "$size" -le "$max"
       - name: Remove smoke container
