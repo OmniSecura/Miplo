@@ -108,7 +108,7 @@ jobs:
           --cov=services.app --cov-report=term-missing --cov-report=html:services/htmlcov
       - name: Upload coverage report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-report
           path: services/htmlcov/
