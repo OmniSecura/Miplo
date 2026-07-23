@@ -88,6 +88,7 @@ class ErrorCode(str, Enum):
     INVALID_FILE_TYPE = "invalid_file_type"
     AVATAR_UPLOAD_FAILED = "avatar_upload_failed"
     COVER_UPLOAD_FAILED = "cover_upload_failed"
+    COVER_SOURCE_UNAVAILABLE = "cover_source_unavailable"
     GALLERY_LIMIT_REACHED = "gallery_limit_reached"
     IMAGE_NOT_FOUND = "image_not_found"
     IMAGE_UPLOAD_FAILED = "image_upload_failed"

@@ -120,7 +120,8 @@ Niepoprawny token nadal daje `401`; tylko całkowity brak nagłówka oznacza go�
 wdrażać Alembikiem lub kontrolowanym SQL-em z `database/sql/`. Aktualna kolejność
 to `0002_game_media_moderation.sql`, następnie `0003_game_barcodes.sql`.
 Po nich stosujemy `0004_game_language_enum.sql`, `0005_exact_barcode_formats.sql`
-i `0006_shelf_items.sql`, a następnie `0007_ratings.sql`.
+i `0006_shelf_items.sql`, a następnie `0007_ratings.sql` oraz
+`0008_box_face_textures.sql`.
 
 ## Powiązane decyzje
 

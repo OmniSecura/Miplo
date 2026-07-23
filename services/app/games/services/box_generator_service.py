@@ -12,7 +12,9 @@ import json
 import logging
 import math
 import struct
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from urllib.parse import unquote, urlparse
 
 from fastapi import UploadFile
 from google.cloud.exceptions import NotFound
@@ -34,7 +36,9 @@ MAX_SIDE_BYTES = 2 * 1024 * 1024
 MAX_TOTAL_BYTES = 12 * 1024 * 1024
 MAX_IMAGE_PIXELS = 24_000_000
 MAX_TEXTURE_DIMENSION = 1024
+MAX_FACE_DIMENSION = 512
 MAX_GLB_BYTES = 24 * 1024 * 1024
+FACE_WEBP_QUALITY = 80
 _CHUNK_SIZE = 64 * 1024
 _WALL_CM = 0.20
 _CLEARANCE_CM = 0.05
@@ -42,12 +46,49 @@ _LID_DEPTH_RATIO = 0.96
 _GENERATION_SLOTS = asyncio.Semaphore(settings.MODEL_GENERATION_CONCURRENCY)
 
 
+@dataclass(frozen=True)
+class PublishedModelAssets:
+    model_3d_url: str
+    box_face_front_url: str
+    box_face_side_url: str
+    box_face_top_url: str
+    public_paths: tuple[str, str, str, str]
+
+
+def _candidate_prefix(game_id: int, job_id: str) -> str:
+    return f"games/{game_id}/box-model/{job_id}"
+
+
 def _candidate_path(game_id: int, job_id: str) -> str:
-    return f"games/{game_id}/models/submissions/{job_id}.glb"
+    return f"{_candidate_prefix(game_id, job_id)}/box_model.glb"
+
+
+def _face_paths(prefix: str) -> dict[str, str]:
+    return {
+        "front": f"{prefix}/face_front.webp",
+        "side": f"{prefix}/face_side.webp",
+        "top": f"{prefix}/face_top.webp",
+    }
+
+
+def _candidate_face_paths(candidate_path: str) -> dict[str, str]:
+    prefix, separator, _filename = candidate_path.rpartition("/")
+    if not separator:
+        raise ValueError("invalid model candidate path")
+    return _face_paths(prefix)
 
 
 def _public_path(game_id: int) -> str:
+    """Historyczna stała ścieżka GLB, używana tylko przy sprzątaniu starych modeli."""
     return f"games/{game_id}/box_model.glb"
+
+
+def _release_paths(game_id: int, job_id: str) -> dict[str, str]:
+    prefix = f"games/{game_id}/box-model/releases/{job_id}"
+    return {
+        "model": f"{prefix}/box_model.glb",
+        **_face_paths(prefix),
+    }
 
 
 async def _read_limited(file: UploadFile) -> bytes:
@@ -85,13 +126,40 @@ def _validate_image(raw: bytes) -> None:
         raise ApiError.bad_request(ErrorCode.INVALID_FILE_TYPE)
 
 
-async def read_validated_sides(files: dict[str, UploadFile | None]) -> dict[str, bytes]:
-    if set(files) != set(SIDE_NAMES) or any(files[name] is None for name in SIDE_NAMES):
+async def read_validated_sides(
+    files: dict[str, UploadFile | None],
+    *,
+    front_content: bytes | None = None,
+) -> dict[str, bytes]:
+    """Waliduje sześć ścian; front może pochodzić z covera kontrolowanego przez backend."""
+    if set(files) != set(SIDE_NAMES):
         raise ApiError.bad_request(ErrorCode.ALL_SIDES_REQUIRED)
+    missing = [
+        name
+        for name in SIDE_NAMES
+        if files[name] is None and not (name == "front" and front_content is not None)
+    ]
+    if missing:
+        raise ApiError.bad_request(
+            ErrorCode.ALL_SIDES_REQUIRED,
+            details={"missing": missing},
+        )
 
     result: dict[str, bytes] = {}
     total = 0
+    if front_content is not None:
+        if not front_content or len(front_content) > MAX_SIDE_BYTES:
+            raise ApiError(502, ErrorCode.COVER_SOURCE_UNAVAILABLE)
+        try:
+            await run_in_threadpool(_validate_image, front_content)
+        except ApiError:
+            raise ApiError(502, ErrorCode.COVER_SOURCE_UNAVAILABLE)
+        result["front"] = front_content
+        total = len(front_content)
+
     for name in SIDE_NAMES:
+        if name == "front" and front_content is not None:
+            continue
         file = files[name]
         if file is None:  # defense in depth; normalnie odrzucone wyżej
             raise ApiError.bad_request(ErrorCode.ALL_SIDES_REQUIRED)
@@ -127,21 +195,27 @@ async def read_validated_sides(files: dict[str, UploadFile | None]) -> dict[str,
     return result
 
 
-def _target_pixels(width: float, height: float) -> tuple[int, int]:
+def _target_pixels(
+    width: float,
+    height: float,
+    max_dimension: int = MAX_TEXTURE_DIMENSION,
+) -> tuple[int, int]:
     longest = max(width, height)
-    scale = MAX_TEXTURE_DIMENSION / longest
+    scale = max_dimension / longest
     return (
-        max(64, min(MAX_TEXTURE_DIMENSION, round(width * scale))),
-        max(64, min(MAX_TEXTURE_DIMENSION, round(height * scale))),
+        max(32, min(max_dimension, round(width * scale))),
+        max(32, min(max_dimension, round(height * scale))),
     )
 
 
-def _texture_jpeg(
+def _prepare_texture(
     raw: bytes,
     physical_width: float,
     physical_height: float,
     rotation_clockwise: int = 0,
-) -> bytes:
+    *,
+    max_dimension: int,
+) -> Image.Image:
     image: Image.Image = Image.open(io.BytesIO(raw))
     image.load()
     image = ImageOps.exif_transpose(image).convert("RGB")
@@ -170,13 +244,77 @@ def _texture_jpeg(
 
     image = ImageOps.fit(
         image,
-        _target_pixels(physical_width, physical_height),
+        _target_pixels(physical_width, physical_height, max_dimension),
         method=Image.Resampling.LANCZOS,
         centering=(0.5, 0.5),
+    )
+    return image
+
+
+def _texture_jpeg(
+    raw: bytes,
+    physical_width: float,
+    physical_height: float,
+    rotation_clockwise: int = 0,
+) -> bytes:
+    image = _prepare_texture(
+        raw,
+        physical_width,
+        physical_height,
+        rotation_clockwise,
+        max_dimension=MAX_TEXTURE_DIMENSION,
     )
     output = io.BytesIO()
     image.save(output, "JPEG", quality=85, optimize=True, progressive=True)
     return output.getvalue()
+
+
+def _texture_webp(
+    raw: bytes,
+    physical_width: float,
+    physical_height: float,
+    rotation_clockwise: int = 0,
+) -> bytes:
+    image = _prepare_texture(
+        raw,
+        physical_width,
+        physical_height,
+        rotation_clockwise,
+        max_dimension=MAX_FACE_DIMENSION,
+    )
+    output = io.BytesIO()
+    image.save(output, "WEBP", quality=FACE_WEBP_QUALITY, method=6)
+    return output.getvalue()
+
+
+def build_box_face_textures(
+    raw_sides: dict[str, bytes],
+    dimensions_cm: tuple[float, float, float],
+    rotations: dict[str, int] | None = None,
+) -> dict[str, bytes]:
+    """Tworzy trzy lekkie tekstury kafelka z identyczną orientacją jak GLB."""
+    width_cm, height_cm, depth_cm = dimensions_cm
+    rotations = rotations or {}
+    return {
+        "front": _texture_webp(
+            raw_sides["front"],
+            width_cm,
+            height_cm,
+            rotations.get("front", 0),
+        ),
+        "side": _texture_webp(
+            raw_sides["left"],
+            depth_cm,
+            height_cm,
+            rotations.get("left", 0),
+        ),
+        "top": _texture_webp(
+            raw_sides["top"],
+            width_cm,
+            depth_cm,
+            rotations.get("top", 0),
+        ),
+    }
 
 
 class _BinaryBuilder:
@@ -566,10 +704,10 @@ def build_glb(
     return glb
 
 
-def _upload_private(path: str, glb: bytes) -> None:
+def _upload_private(path: str, payload: bytes, content_type: str) -> None:
     blob = get_bucket().blob(path)
     blob.cache_control = "private, no-store"
-    blob.upload_from_string(glb, content_type="model/gltf-binary")
+    blob.upload_from_string(payload, content_type=content_type)
 
 
 def _delete(path: str | None) -> None:
@@ -593,27 +731,110 @@ def signed_preview_url(path: str) -> str:
     )
 
 
-def publish_candidate(game_id: int, candidate_path: str) -> str:
+def publish_candidate_bundle(
+    game_id: int,
+    job_id: str,
+    candidate_path: str,
+) -> PublishedModelAssets:
+    """Publikuje komplet GLB + 3 WEBP-y albo wycofuje całą nową wersję."""
     bucket = get_bucket()
-    source = bucket.blob(candidate_path)
-    destination = bucket.copy_blob(source, bucket, _public_path(game_id))
-    destination.cache_control = "public, max-age=31536000, immutable"
-    destination.patch()
-    destination.make_public()
+    candidates = {
+        "model": candidate_path,
+        **_candidate_face_paths(candidate_path),
+    }
+    destinations = _release_paths(game_id, job_id)
+    published_paths: list[str] = []
     version = int(datetime.now(timezone.utc).timestamp() * 1000)
-    return f"{destination.public_url}?v={version}"
+    urls: dict[str, str] = {}
+    try:
+        for name in ("model", "front", "side", "top"):
+            source = bucket.blob(candidates[name])
+            destination = bucket.copy_blob(source, bucket, destinations[name])
+            published_paths.append(destinations[name])
+            destination.cache_control = "public, max-age=31536000, immutable"
+            destination.patch()
+            destination.make_public()
+            urls[name] = f"{destination.public_url}?v={version}"
+    except Exception:
+        for path in published_paths:
+            try:
+                _delete(path)
+            except Exception:
+                logger.warning(
+                    "Nie udało się wycofać częściowo opublikowanego zasobu %s",
+                    path,
+                    exc_info=True,
+                )
+        raise
+
+    return PublishedModelAssets(
+        model_3d_url=urls["model"],
+        box_face_front_url=urls["front"],
+        box_face_side_url=urls["side"],
+        box_face_top_url=urls["top"],
+        public_paths=(
+            destinations["model"],
+            destinations["front"],
+            destinations["side"],
+            destinations["top"],
+        ),
+    )
 
 
-def delete_path(path: str | None) -> None:
-    _delete(path)
-
-
-def delete_model_files(game_id: int, candidate_path: str | None = None) -> None:
-    for path in (candidate_path, _public_path(game_id)):
+def delete_paths(paths: tuple[str, ...]) -> None:
+    for path in paths:
         try:
             _delete(path)
         except Exception:
-            logger.warning("Nie udało się usunąć modelu %s", path, exc_info=True)
+            logger.warning("Nie udało się usunąć zasobu %s", path, exc_info=True)
+
+
+def delete_candidate_bundle(candidate_path: str | None) -> None:
+    if not candidate_path:
+        return
+    for path in (candidate_path, *_candidate_face_paths(candidate_path).values()):
+        try:
+            _delete(path)
+        except Exception:
+            logger.warning("Nie udało się usunąć kandydata modelu %s", path, exc_info=True)
+
+
+def _path_from_public_url(game_id: int, url: str | None) -> str | None:
+    if not url:
+        return None
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or parsed.netloc != "storage.googleapis.com":
+        return None
+    path = unquote(parsed.path).lstrip("/")
+    bucket_prefix = f"{get_bucket().name}/"
+    if not path.startswith(bucket_prefix):
+        return None
+    storage_path = path[len(bucket_prefix) :]
+    if not storage_path.startswith(f"games/{game_id}/"):
+        return None
+    return storage_path
+
+
+def delete_public_assets(game_id: int, urls: tuple[str | None, ...]) -> None:
+    paths = {_public_path(game_id)}
+    for url in urls:
+        try:
+            path = _path_from_public_url(game_id, url)
+        except Exception:
+            logger.warning("Nie udało się odczytać ścieżki publicznego zasobu", exc_info=True)
+            continue
+        if path:
+            paths.add(path)
+    delete_paths(tuple(paths))
+
+
+def delete_model_files(
+    game_id: int,
+    candidate_path: str | None = None,
+    public_urls: tuple[str | None, ...] = (),
+) -> None:
+    delete_candidate_bundle(candidate_path)
+    delete_public_assets(game_id, public_urls)
 
 
 def _set_processing(game_id: int, job_id: str) -> bool:
@@ -656,7 +877,8 @@ async def generate_and_upload(
 ) -> None:
     """Ograniczony job requestowy: zawsze kończy awaiting_review albo failed."""
     candidate_path = _candidate_path(game_id, job_id)
-    uploaded = False
+    candidate_faces = _candidate_face_paths(candidate_path)
+    uploaded_paths: list[str] = []
     slot_acquired = False
     try:
         # Timeout dotyczy wyłącznie oczekiwania na wolny slot. Nie anulujemy
@@ -670,18 +892,41 @@ async def generate_and_upload(
         if not _set_processing(game_id, job_id):
             return
         glb = await run_in_threadpool(build_glb, raw_sides, dimensions_cm, rotations)
-        await run_in_threadpool(_upload_private, candidate_path, glb)
-        uploaded = True
+        face_textures = await run_in_threadpool(
+            build_box_face_textures,
+            raw_sides,
+            dimensions_cm,
+            rotations,
+        )
+        await run_in_threadpool(
+            _upload_private,
+            candidate_path,
+            glb,
+            "model/gltf-binary",
+        )
+        uploaded_paths.append(candidate_path)
+        for name in ("front", "side", "top"):
+            path = candidate_faces[name]
+            await run_in_threadpool(
+                _upload_private,
+                path,
+                face_textures[name],
+                "image/webp",
+            )
+            uploaded_paths.append(path)
         if not _set_awaiting_review(game_id, job_id, candidate_path):
-            await run_in_threadpool(_delete, candidate_path)
+            await run_in_threadpool(delete_candidate_bundle, candidate_path)
     except Exception:
         logger.exception("Generowanie modelu 3D gry %d nie powiodło się", game_id)
-        if uploaded:
+        for path in uploaded_paths:
             try:
-                _delete(candidate_path)
+                _delete(path)
             except Exception:
                 logger.warning(
-                    "Cleanup nieudanego modelu %d nie powiódł się", game_id, exc_info=True
+                    "Cleanup nieudanego modelu %d nie powiódł się dla %s",
+                    game_id,
+                    path,
+                    exc_info=True,
                 )
         try:
             _set_failed(game_id, job_id)

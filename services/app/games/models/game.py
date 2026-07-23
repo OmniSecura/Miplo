@@ -91,6 +91,18 @@ class Game(Base):
             "miplo_ratings_count >= 0 AND miplo_reviews_count >= 0",
             name="ck_games_miplo_counts",
         ),
+        CheckConstraint(
+            "("
+            "box_face_front_url IS NULL AND "
+            "box_face_side_url IS NULL AND "
+            "box_face_top_url IS NULL"
+            ") OR ("
+            "box_face_front_url IS NOT NULL AND "
+            "box_face_side_url IS NOT NULL AND "
+            "box_face_top_url IS NOT NULL"
+            ")",
+            name="ck_games_box_face_urls_complete",
+        ),
         Index("ix_games_title", "title"),
         Index("ix_games_is_expansion", "is_expansion"),
         Index("ix_games_bgg_rank", "bgg_rank"),
@@ -151,6 +163,9 @@ class Game(Base):
     box_depth: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
 
     model_3d_url: Mapped[str | None] = mapped_column(String(500))
+    box_face_front_url: Mapped[str | None] = mapped_column(String(500))
+    box_face_side_url: Mapped[str | None] = mapped_column(String(500))
+    box_face_top_url: Mapped[str | None] = mapped_column(String(500))
     model_status: Mapped[str | None] = mapped_column(String(20))
     model_candidate_path: Mapped[str | None] = mapped_column(String(500))
     model_job_id: Mapped[str | None] = mapped_column(String(36), index=True)

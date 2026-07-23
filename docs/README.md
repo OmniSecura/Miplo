@@ -15,7 +15,7 @@ przyjęto konkretne rozwiązania.
 | [`SHELF.md`](SHELF.md) | półka usera, wypożyczanie, statystyki i import kolekcji BGG |
 | [`RATINGS.md`](RATINGS.md) | oceny, recenzje, agregaty, import i moderacja |
 | [`ENDPOINTS.md`](ENDPOINTS.md) | pełny katalog aktualnych endpointów HTTP                    |
-| [`DEMO-FRONTEND.md`](DEMO-FRONTEND.md) | gotowy brief dla do zbudowania demo frontendu  |
+| [`DEMO-FRONTEND.md`](DEMO-FRONTEND.md) | UI/UX aplikacji mobilnej: plan budowy fazami + endpointy |
 | [`CONFIGURATION.md`](CONFIGURATION.md) | zmienne środowiskowe i zachowanie local/dev/prod            |
 | [`ERRORS.md`](ERRORS.md) | stabilny kontrakt `error_code` dla frontendu                |
 | [`SECURITY-AUDIT.md`](SECURITY-AUDIT.md) | wynik audytu bezpieczeństwa z 18.07.2026 |
@@ -61,7 +61,8 @@ dla lokalnego developmentu. Nie zastępuje migracji istniejącego schematu.
   3. `database/sql/migrations/0004_game_language_enum.sql`,
   4. `database/sql/migrations/0005_exact_barcode_formats.sql`,
   5. `database/sql/migrations/0006_shelf_items.sql`,
-  6. `database/sql/migrations/0007_ratings.sql`.
+  6. `database/sql/migrations/0007_ratings.sql`,
+  7. `database/sql/migrations/0008_box_face_textures.sql`.
 
 Docelowo produkcyjne migracje powinny zostać przeniesione do Alembic.
 

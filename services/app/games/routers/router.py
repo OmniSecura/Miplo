@@ -47,6 +47,7 @@ from services.app.games.schemas import (
 )
 from services.app.games.services import (
     box_generator_service,
+    cover_service,
     game_service,
 )
 from services.app.shelf.services import shelf_service
@@ -216,7 +217,13 @@ async def submit_3d_model(
     request: Request,
     response: Response,
     slug: str = Path(min_length=1, max_length=200),
-    file_front: UploadFile | None = File(None),
+    file_front: UploadFile | None = File(
+        None,
+        description=(
+            "Wymagany tylko, gdy gra nie ma okładki. Jeśli cover istnieje, "
+            "backend zawsze używa go jako frontu."
+        ),
+    ),
     file_back: UploadFile | None = File(None),
     file_left: UploadFile | None = File(None),
     file_right: UploadFile | None = File(None),
@@ -235,6 +242,13 @@ async def submit_3d_model(
     db: Session = Depends(get_db),
 ) -> GameDetail:
     game = game_service.assert_model_submission_allowed(db, slug, current_user)
+    front_from_cover = await cover_service.prepare_model_front(
+        game.cover_candidate_path,
+        game.cover_url,
+    )
+    if front_from_cover is not None and file_front is not None:
+        # Upload nie może nadpisać istniejącej okładki; zamykamy nieużywany bufor.
+        await file_front.close()
     raw_sides = await box_generator_service.read_validated_sides(
         {
             "front": file_front,
@@ -243,7 +257,8 @@ async def submit_3d_model(
             "right": file_right,
             "top": file_top,
             "bottom": file_bottom,
-        }
+        },
+        front_content=front_from_cover,
     )
     game, job_id = game_service.begin_model_submission(db, slug, current_user)
     dimensions = (
@@ -252,7 +267,9 @@ async def submit_3d_model(
         float(game.box_depth or 7.0),
     )
     rotations = {
-        "front": int(rotation_front),
+        # Cover jest już zatwierdzoną, pionowo poprawną okładką. Korekta frontu
+        # dotyczy tylko zdjęcia przesłanego przy braku covera.
+        "front": 0 if front_from_cover is not None else int(rotation_front),
         "back": int(rotation_back),
         "left": int(rotation_left),
         "right": int(rotation_right),

@@ -124,10 +124,11 @@ nieusuwania opublikowanych kodów; nowy model pozwala na barcode per język.
 | `invalid_file_type` | 400 | niedozwolony Content-Type albo niepoprawne bajty obrazu |
 | `avatar_upload_failed` | 502 | awaria uploadu avatara |
 | `cover_upload_failed` | 502 | awaria okładki lub jej publikacji |
+| `cover_source_unavailable` | 502 | cover wymagany jako front modelu jest niedostępny lub niepoprawny |
 | `image_upload_failed` | 502 | awaria galerii |
 | `gallery_limit_reached` | 409 | osiągnięto limit zdjęć gry |
 | `image_not_found` | 404 | brak zdjęcia |
-| `all_sides_required` | 400 | brakuje co najmniej jednej z sześciu tekstur |
+| `all_sides_required` | 400 | brakuje wymaganej tekstury; front jest opcjonalny tylko przy istniejącym coverze |
 | `model_generation_failed` | stan modelu | job GLB zakończył się błędem |
 | `model_already_processing` | 409 | istnieje aktywna propozycja modelu |
 | `model_not_found` | 404 | brak kandydata modelu |

@@ -59,6 +59,9 @@ def to_response(item: ShelfItem) -> ShelfItemResponse:
         game_rating=game.rating,
         game_miplo_rating=_public_miplo_rating(game),
         game_model_3d_url=game.model_3d_url,
+        game_box_face_front_url=game.box_face_front_url,
+        game_box_face_side_url=game.box_face_side_url,
+        game_box_face_top_url=game.box_face_top_url,
     )
 
 
@@ -80,6 +83,9 @@ def to_public_response(item: ShelfItem) -> ShelfPublicItem:
         game_rating=game.rating,
         game_miplo_rating=_public_miplo_rating(game),
         game_model_3d_url=game.model_3d_url,
+        game_box_face_front_url=game.box_face_front_url,
+        game_box_face_side_url=game.box_face_side_url,
+        game_box_face_top_url=game.box_face_top_url,
     )
 
 
