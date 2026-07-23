@@ -86,7 +86,7 @@ GameDescription = Annotated[
 def _split_multipart_list(value: object) -> object:
     """Swagger UI serializuje multi-select w multipart jako jedno pole CSV.
 
-    Akceptujemy oba formaty: powtórzone pola oraz "Euro,Strategia" w jednym.
+    Akceptujemy oba formaty: powtórzone pola oraz "Ekonomiczne,Strategia" w jednym.
     Pusta lista (np. `game_types=` z wygenerowanego curla) staje się None.
     """
     if isinstance(value, list | tuple):
@@ -319,6 +319,9 @@ class GameListItem(BaseModel):
     cover_url: str | None = None
     game_types: list[str] = Field(default_factory=list)
     model_3d_url: str | None = None
+    box_face_front_url: str | None = None
+    box_face_side_url: str | None = None
+    box_face_top_url: str | None = None
     source: str
     bgg_rank: int | None = None
     users_rated: int | None = None

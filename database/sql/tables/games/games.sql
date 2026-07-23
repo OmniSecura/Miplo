@@ -34,6 +34,9 @@ CREATE TABLE IF NOT EXISTS games (
     box_height      NUMERIC(5,2),
     box_depth       NUMERIC(5,2),
     model_3d_url    VARCHAR(500),
+    box_face_front_url VARCHAR(500),
+    box_face_side_url VARCHAR(500),
+    box_face_top_url VARCHAR(500),
     model_status    VARCHAR(20),
     model_candidate_path VARCHAR(500),
     model_job_id    VARCHAR(36),
@@ -68,6 +71,19 @@ CREATE TABLE IF NOT EXISTS games (
     ),
     CONSTRAINT ck_games_miplo_counts CHECK (
         miplo_ratings_count >= 0 AND miplo_reviews_count >= 0
+    ),
+    CONSTRAINT ck_games_box_face_urls_complete CHECK (
+        (
+            box_face_front_url IS NULL
+            AND box_face_side_url IS NULL
+            AND box_face_top_url IS NULL
+        )
+        OR
+        (
+            box_face_front_url IS NOT NULL
+            AND box_face_side_url IS NOT NULL
+            AND box_face_top_url IS NOT NULL
+        )
     )
 );
 

@@ -133,6 +133,9 @@ class ShelfItemResponse(BaseModel):
     game_rating: Decimal | None
     game_miplo_rating: Decimal | None = None
     game_model_3d_url: str | None
+    game_box_face_front_url: str | None
+    game_box_face_side_url: str | None
+    game_box_face_top_url: str | None
 
 
 class ShelfPublicItem(BaseModel):
@@ -151,6 +154,9 @@ class ShelfPublicItem(BaseModel):
     game_rating: Decimal | None
     game_miplo_rating: Decimal | None = None
     game_model_3d_url: str | None
+    game_box_face_front_url: str | None
+    game_box_face_side_url: str | None
+    game_box_face_top_url: str | None
 
 
 class PaginatedShelf(BaseModel):

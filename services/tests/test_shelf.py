@@ -112,6 +112,10 @@ class ShelfServiceTests(unittest.TestCase):
             asyncio.run(bgg_client.fetch_collection("a" * 51))
 
     def test_crud_is_scoped_to_current_user_and_duplicate_is_blocked(self) -> None:
+        self.games[0].box_face_front_url = "https://storage.example/front.webp"
+        self.games[0].box_face_side_url = "https://storage.example/side.webp"
+        self.games[0].box_face_top_url = "https://storage.example/top.webp"
+        self.db.commit()
         item = self._add(
             self.games[0],
             lendable=True,
@@ -123,6 +127,31 @@ class ShelfServiceTests(unittest.TestCase):
         self.assertNotIn("id", api_item)
         self.assertNotIn("game_id", api_item)
         self.assertEqual(api_item["game_slug"], self.games[0].slug)
+        self.assertEqual(
+            api_item["game_box_face_front_url"],
+            "https://storage.example/front.webp",
+        )
+        self.assertEqual(
+            api_item["game_box_face_side_url"],
+            "https://storage.example/side.webp",
+        )
+        self.assertEqual(
+            api_item["game_box_face_top_url"],
+            "https://storage.example/top.webp",
+        )
+        public_item = shelf_service.to_public_response(item)
+        self.assertEqual(
+            (
+                public_item.game_box_face_front_url,
+                public_item.game_box_face_side_url,
+                public_item.game_box_face_top_url,
+            ),
+            (
+                "https://storage.example/front.webp",
+                "https://storage.example/side.webp",
+                "https://storage.example/top.webp",
+            ),
+        )
         with self.assertRaises(ApiError) as duplicate:
             self._add(self.games[0])
         self.assertEqual(

@@ -8,7 +8,7 @@ import os
 import struct
 import tempfile
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from xml.etree import ElementTree as ET
 
 os.environ["ENV"] = "local"
@@ -22,6 +22,7 @@ from fastapi import UploadFile
 from PIL import Image
 from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from starlette.requests import Request
 
 from services.app.core import bgg_client
@@ -40,6 +41,8 @@ from services.app.games.services import (
     game_service,
     moderation_service,
 )
+from services.app.shelf.schemas import ShelfItemCreate
+from services.app.shelf.services import shelf_service
 from services.app.users.models import User
 
 
@@ -359,9 +362,15 @@ class GamesServiceTests(unittest.TestCase):
 
     def test_delete_custom_game_cleans_assets_and_record(self) -> None:
         game = self._create_custom()
-        with patch("services.app.games.services.cover_service.delete_game_assets") as delete_assets:
+        with (
+            patch("services.app.games.services.cover_service.delete_game_assets") as delete_assets,
+            patch(
+                "services.app.games.services.box_generator_service.delete_model_files"
+            ) as delete_models,
+        ):
             game_service.delete_custom_game(self.db, game.slug, self.user)
         delete_assets.assert_called_once_with(game.id)
+        delete_models.assert_called_once_with(game.id, None, (None, None, None, None))
         self.assertIsNone(self.db.get(Game, game.id))
 
     def test_cover_is_reencoded_and_limited(self) -> None:
@@ -390,6 +399,77 @@ class GamesServiceTests(unittest.TestCase):
             context.exception.detail["error_code"],
             ErrorCode.INVALID_FILE_TYPE.value,
         )
+
+    def test_model_front_prefers_private_cover_candidate_and_is_reencoded(self) -> None:
+        raw = self._image_bytes((220, 30, 40))
+        with (
+            patch.object(cover_service, "_download_private_cover", return_value=raw),
+            patch.object(
+                cover_service,
+                "_download_remote_cover",
+                new=AsyncMock(),
+            ) as remote_download,
+        ):
+            front = asyncio.run(
+                cover_service.prepare_model_front(
+                    "games/1/submissions/covers/candidate.webp",
+                    "https://cf.geekdo-images.com/public.jpg",
+                )
+            )
+
+        remote_download.assert_not_awaited()
+        image = Image.open(io.BytesIO(front or b""))
+        self.assertEqual(image.format, "WEBP")
+        self.assertLessEqual(max(image.size), 800)
+
+    def test_model_cover_url_allowlist_blocks_ssrf_targets(self) -> None:
+        self.assertTrue(
+            cover_service._is_allowed_model_cover_url(
+                "https://cf.geekdo-images.com/example/original/img.jpg"
+            )
+        )
+        self.assertTrue(
+            cover_service._is_allowed_model_cover_url(
+                f"https://storage.googleapis.com/{settings.FIREBASE_STORAGE_BUCKET}/"
+                "games/1/cover.webp"
+            )
+        )
+        for unsafe in (
+            "http://cf.geekdo-images.com/image.jpg",
+            "https://127.0.0.1/internal",
+            "https://storage.googleapis.com/other-bucket/secret",
+            "https://storage.googleapis.com.evil.example/unused-in-unit-tests/cover.webp",
+            "https://user:password@cf.geekdo-images.com/image.jpg",
+        ):
+            self.assertFalse(cover_service._is_allowed_model_cover_url(unsafe))
+
+    def test_no_cover_requires_uploaded_front_but_cover_replaces_it(self) -> None:
+        files = {
+            name: UploadFile(
+                file=io.BytesIO(self._image_bytes((200, 0, 0))),
+                filename=f"{name}.png",
+                headers={"content-type": "image/png"},
+            )
+            for name in box_generator_service.SIDE_NAMES
+        }
+        files["front"] = None
+        with self.assertRaises(ApiError) as context:
+            asyncio.run(box_generator_service.read_validated_sides(files))
+        self.assertEqual(
+            context.exception.detail["error_code"],
+            ErrorCode.ALL_SIDES_REQUIRED.value,
+        )
+        self.assertEqual(context.exception.detail["details"]["missing"], ["front"])
+
+        cover = self._image_bytes((0, 0, 220))
+        result = asyncio.run(
+            box_generator_service.read_validated_sides(
+                files,
+                front_content=cover,
+            )
+        )
+        self.assertEqual(result["front"], cover)
+        self.assertEqual(set(result), set(box_generator_service.SIDE_NAMES))
 
     def test_glb_contains_two_parts_and_six_embedded_textures(self) -> None:
         raw_sides = {
@@ -462,6 +542,127 @@ class GamesServiceTests(unittest.TestCase):
         image = Image.open(io.BytesIO(optimized))
         self.assertGreater(image.height, image.width)
 
+    def test_box_face_textures_are_webp_limited_and_use_form_rotations(self) -> None:
+        source = Image.new("RGB", (900, 600), (0, 0, 255))
+        for y in range(300):
+            for x in range(900):
+                source.putpixel((x, y), (255, 0, 0))
+        raw = io.BytesIO()
+        source.save(raw, "PNG")
+        sides = {name: raw.getvalue() for name in box_generator_service.SIDE_NAMES}
+
+        faces = box_generator_service.build_box_face_textures(
+            sides,
+            (29.8, 29.8, 7.4),
+            {"front": 180, "left": 0, "top": 0},
+        )
+
+        self.assertEqual(set(faces), {"front", "side", "top"})
+        for payload in faces.values():
+            image = Image.open(io.BytesIO(payload))
+            self.assertEqual(image.format, "WEBP")
+            self.assertLessEqual(max(image.size), 512)
+        front = Image.open(io.BytesIO(faces["front"]))
+        self.assertGreater(
+            front.getpixel((front.width // 2, front.height // 4))[2],
+            front.getpixel((front.width // 2, front.height // 4))[0],
+        )
+
+    def test_generator_uploads_glb_and_three_faces_to_one_staging_prefix(self) -> None:
+        raw_sides = {
+            name: self._image_bytes((index * 20, 80, 120))
+            for index, name in enumerate(box_generator_service.SIDE_NAMES, start=1)
+        }
+        uploads: list[tuple[str, str]] = []
+
+        def remember_upload(path: str, _payload: bytes, content_type: str) -> None:
+            uploads.append((path, content_type))
+
+        with (
+            patch.object(box_generator_service, "_set_processing", return_value=True),
+            patch.object(box_generator_service, "_set_awaiting_review", return_value=True),
+            patch.object(box_generator_service, "_upload_private", side_effect=remember_upload),
+        ):
+            asyncio.run(
+                box_generator_service.generate_and_upload(
+                    7,
+                    "job-123",
+                    raw_sides,
+                    (29.8, 29.8, 7.4),
+                )
+            )
+
+        self.assertEqual(
+            uploads,
+            [
+                (
+                    "games/7/box-model/job-123/box_model.glb",
+                    "model/gltf-binary",
+                ),
+                ("games/7/box-model/job-123/face_front.webp", "image/webp"),
+                ("games/7/box-model/job-123/face_side.webp", "image/webp"),
+                ("games/7/box-model/job-123/face_top.webp", "image/webp"),
+            ],
+        )
+        self.assertEqual(raw_sides, {})
+
+    def test_partial_face_upload_failure_cleans_staging_and_marks_job_failed(self) -> None:
+        raw_sides = {
+            name: self._image_bytes((index * 20, 80, 120))
+            for index, name in enumerate(box_generator_service.SIDE_NAMES, start=1)
+        }
+        upload_calls = 0
+
+        def fail_second_upload(_path: str, _payload: bytes, _content_type: str) -> None:
+            nonlocal upload_calls
+            upload_calls += 1
+            if upload_calls == 2:
+                raise RuntimeError("storage unavailable")
+
+        with (
+            patch.object(box_generator_service, "_set_processing", return_value=True),
+            patch.object(box_generator_service, "_set_failed") as set_failed,
+            patch.object(
+                box_generator_service,
+                "_upload_private",
+                side_effect=fail_second_upload,
+            ),
+            patch.object(box_generator_service, "_delete") as delete,
+        ):
+            asyncio.run(
+                box_generator_service.generate_and_upload(
+                    7,
+                    "job-failed",
+                    raw_sides,
+                    (29.8, 29.8, 7.4),
+                )
+            )
+
+        set_failed.assert_called_once_with(7, "job-failed")
+        delete.assert_called_once_with("games/7/box-model/job-failed/box_model.glb")
+        self.assertEqual(raw_sides, {})
+
+    def test_partial_publication_rolls_back_new_release(self) -> None:
+        bucket = MagicMock()
+        destination = MagicMock()
+        destination.make_public.side_effect = RuntimeError("ACL unavailable")
+        bucket.copy_blob.return_value = destination
+
+        with (
+            patch.object(box_generator_service, "get_bucket", return_value=bucket),
+            patch.object(box_generator_service, "_delete") as delete,
+            self.assertRaises(RuntimeError),
+        ):
+            box_generator_service.publish_candidate_bundle(
+                7,
+                "job-publication-failed",
+                "games/7/box-model/job-publication-failed/box_model.glb",
+            )
+
+        delete.assert_called_once_with(
+            "games/7/box-model/releases/job-publication-failed/box_model.glb"
+        )
+
     def test_explicit_side_rotation_corrects_upside_down_photo(self) -> None:
         source = Image.new("RGB", (100, 100), (0, 0, 255))
         for y in range(50):
@@ -522,13 +723,15 @@ class GamesServiceTests(unittest.TestCase):
         self.db.commit()
 
         game, _ = game_service.begin_model_submission(self.db, game.slug, self.other)
-        with patch("services.app.games.services.box_generator_service.delete_path") as delete_path:
+        with patch(
+            "services.app.games.services.box_generator_service.delete_candidate_bundle"
+        ) as delete_bundle:
             game_service.delete_model_submission(self.db, game.slug, self.other)
         self.db.refresh(game)
         self.assertEqual(game.model_3d_url, "https://storage.example/approved.glb")
         self.assertEqual(game.model_status, "ready")
         self.assertTrue(game.model_is_verified)
-        delete_path.assert_called_once_with(None)
+        delete_bundle.assert_called_once_with(None)
 
     def test_all_six_model_sides_are_required(self) -> None:
         files = {
@@ -549,20 +752,137 @@ class GamesServiceTests(unittest.TestCase):
 
     def test_model_candidate_requires_admin_approval(self) -> None:
         game = self._create_custom()
+        moderation_service.approve_game(self.db, game.slug)
         game, _ = game_service.begin_model_submission(self.db, game.slug, self.user)
         game.model_status = "awaiting_review"
-        game.model_candidate_path = "games/1/models/submissions/job.glb"
+        game.model_candidate_path = "games/1/box-model/job/box_model.glb"
         self.db.commit()
+        published = box_generator_service.PublishedModelAssets(
+            model_3d_url="https://storage.example/box_model.glb?v=1",
+            box_face_front_url="https://storage.example/face_front.webp?v=1",
+            box_face_side_url="https://storage.example/face_side.webp?v=1",
+            box_face_top_url="https://storage.example/face_top.webp?v=1",
+            public_paths=("model", "front", "side", "top"),
+        )
         with (
             patch(
-                "services.app.games.services.box_generator_service.publish_candidate",
-                return_value="https://storage.example/box_model.glb?v=1",
+                "services.app.games.services.box_generator_service.publish_candidate_bundle",
+                return_value=published,
             ),
-            patch("services.app.games.services.box_generator_service.delete_path"),
+            patch("services.app.games.services.box_generator_service.delete_candidate_bundle"),
+            patch("services.app.games.services.box_generator_service.delete_public_assets"),
         ):
             detail = moderation_service.approve_model(self.db, game.slug)
         self.assertEqual(detail.model_status, "ready")
         self.assertEqual(detail.model_3d_url, "https://storage.example/box_model.glb?v=1")
+        self.assertEqual(detail.box_face_front_url, published.box_face_front_url)
+        self.assertEqual(detail.box_face_side_url, published.box_face_side_url)
+        self.assertEqual(detail.box_face_top_url, published.box_face_top_url)
+        shelf_item = shelf_service.add_to_shelf(
+            self.db,
+            self.user.id,
+            ShelfItemCreate(game_slug=game.slug),
+        )
+        shelf_response = shelf_service.to_response(shelf_item)
+        self.assertEqual(
+            shelf_response.game_box_face_front_url,
+            published.box_face_front_url,
+        )
+        self.assertEqual(
+            shelf_response.game_box_face_side_url,
+            published.box_face_side_url,
+        )
+        self.assertEqual(
+            shelf_response.game_box_face_top_url,
+            published.box_face_top_url,
+        )
+
+    def test_box_face_urls_database_invariant_rejects_partial_state(self) -> None:
+        game = self._create_custom()
+        game.box_face_front_url = "https://storage.example/front.webp"
+        with self.assertRaises(IntegrityError):
+            self.db.commit()
+        self.db.rollback()
+
+    def test_rejected_model_removes_all_candidates_and_keeps_face_urls_null(self) -> None:
+        game = self._create_custom()
+        game, _ = game_service.begin_model_submission(self.db, game.slug, self.user)
+        game.model_status = "awaiting_review"
+        game.model_candidate_path = "games/1/box-model/job/box_model.glb"
+        self.db.commit()
+
+        with patch(
+            "services.app.games.services.box_generator_service.delete_candidate_bundle"
+        ) as delete_bundle:
+            moderation_service.reject_model(self.db, game.slug)
+
+        self.db.refresh(game)
+        self.assertIsNone(game.model_3d_url)
+        self.assertIsNone(game.box_face_front_url)
+        self.assertIsNone(game.box_face_side_url)
+        self.assertIsNone(game.box_face_top_url)
+        delete_bundle.assert_called_once_with("games/1/box-model/job/box_model.glb")
+
+    def test_replacement_keeps_old_faces_until_atomic_approval(self) -> None:
+        game = self._create_custom()
+        moderation_service.approve_game(self.db, game.slug)
+        game.model_3d_url = "https://storage.example/old/model.glb"
+        game.box_face_front_url = "https://storage.example/old/front.webp"
+        game.box_face_side_url = "https://storage.example/old/side.webp"
+        game.box_face_top_url = "https://storage.example/old/top.webp"
+        game.model_status = "ready"
+        game.model_is_verified = True
+        self.db.commit()
+
+        game, _ = game_service.begin_model_submission(self.db, game.slug, self.other)
+        pending_detail = game_service.to_detail(game)
+        self.assertEqual(
+            (
+                pending_detail.box_face_front_url,
+                pending_detail.box_face_side_url,
+                pending_detail.box_face_top_url,
+            ),
+            (
+                "https://storage.example/old/front.webp",
+                "https://storage.example/old/side.webp",
+                "https://storage.example/old/top.webp",
+            ),
+        )
+
+        game.model_status = "awaiting_review"
+        game.model_candidate_path = "games/1/box-model/new-job/box_model.glb"
+        self.db.commit()
+        replacement = box_generator_service.PublishedModelAssets(
+            model_3d_url="https://storage.example/new/model.glb",
+            box_face_front_url="https://storage.example/new/front.webp",
+            box_face_side_url="https://storage.example/new/side.webp",
+            box_face_top_url="https://storage.example/new/top.webp",
+            public_paths=("new-model", "new-front", "new-side", "new-top"),
+        )
+        with (
+            patch.object(
+                box_generator_service,
+                "publish_candidate_bundle",
+                return_value=replacement,
+            ),
+            patch.object(box_generator_service, "delete_candidate_bundle"),
+            patch.object(box_generator_service, "delete_public_assets") as delete_old,
+        ):
+            detail = moderation_service.approve_model(self.db, game.slug)
+
+        self.assertEqual(detail.model_3d_url, replacement.model_3d_url)
+        self.assertEqual(detail.box_face_front_url, replacement.box_face_front_url)
+        self.assertEqual(detail.box_face_side_url, replacement.box_face_side_url)
+        self.assertEqual(detail.box_face_top_url, replacement.box_face_top_url)
+        delete_old.assert_called_once_with(
+            game.id,
+            (
+                "https://storage.example/old/model.glb",
+                "https://storage.example/old/front.webp",
+                "https://storage.example/old/side.webp",
+                "https://storage.example/old/top.webp",
+            ),
+        )
 
     def test_bgg_202_is_retried_before_xml_is_parsed(self) -> None:
         calls = 0

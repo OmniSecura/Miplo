@@ -96,6 +96,9 @@ Auth: tak. Zwraca `{items,total,page,size,pages}` dla aktualnego usera. Parametr
 
 `sort=miplo_rating` sortuje po zaufanej średniej Miplo. Wynik pozostaje `null`
 do zebrania trzech widocznych ocen. Widok własny zawiera prywatne pole `notes`.
+Każdy element ma też `game_box_face_front_url`, `game_box_face_side_url` i
+`game_box_face_top_url`; komplet trzech URL-i zasila lekki kafelek pseudo-3D,
+a trzy wartości `null` oznaczają fallback do `game_cover_url`.
 
 ### `POST /api/me/shelf`
 
@@ -138,7 +141,8 @@ oceny BGG bez nadpisywania istniejących ocen Miplo.
 
 Auth: tak. Zwraca półkę aktywnego usera po publicznym tagu, z paginacją i filtrem
 `lendable`. Nie zawiera prywatnego `notes`. Kaucja i warunki są zwracane tylko dla
-pozycji z `lendable=true`. Niezweryfikowane gry są ukryte.
+pozycji z `lendable=true`. Niezweryfikowane gry są ukryte. Element publiczny
+zwraca ten sam komplet pól `game_box_face_*_url` co półka właściciela.
 
 ## Ratings — oceny i recenzje
 
@@ -217,6 +221,9 @@ Parametry:
 - `include_expansions` — domyślnie `false`.
 
 Publiczny katalog zawsze zwraca wyłącznie zweryfikowane gry.
+Każdy `GameListItem` zawiera opcjonalne `box_face_front_url`,
+`box_face_side_url`, `box_face_top_url`. Wszystkie trzy są ustawione wyłącznie
+dla zaakceptowanego pakietu modelu; w przeciwnym razie wszystkie są `null`.
 
 ### `GET /api/games/bgg/{bgg_id}`
 
@@ -237,6 +244,7 @@ tokenem dodaje `on_my_shelf` i `my_shelf_item`. Błędny token daje `401`, nie j
 ignorowany. Dodaje też `my_rating` i `my_review`. Parametr może być slugiem lub zwykłą nazwą, np.
 `Brass Birmingham` jest normalizowane do `brass-birmingham`. Stary rekord może
 zaplanować ograniczony best-effort refresh; odpowiedź zawsze pochodzi z cache.
+`GameDetail` zwraca również trzy pola `box_face_*_url` obecne w widoku listowym.
 
 ### `POST /api/games/{slug}/barcodes`
 
@@ -319,10 +327,14 @@ Zaakceptowane zdjęcia są zwracane w tablicy `images` obiektu `GameDetail`.
 ### `POST /api/games/{slug}/3d-model`
 
 Auth: tak. Dla customowej gry wyłącznie twórca; dla BGG dowolny zalogowany user.
-Limit 3/h. `multipart/form-data` z sześcioma polami: `file_front`, `file_back`,
-`file_left`, `file_right`, `file_top`, `file_bottom`. Każdy obraz ma limit 2 MB,
-a cały formularz 14 MB. Odpowiedź `202` po generowaniu ma
-`model_status="awaiting_review"` albo `model_status="failed"`.
+Limit 3/h. `multipart/form-data` zawsze wymaga `file_back`, `file_left`,
+`file_right`, `file_top`, `file_bottom`. `file_front` jest wymagany wyłącznie,
+gdy gra nie ma okładki. Przy istniejącym `cover_url` lub kandydacie covera backend
+zawsze używa okładki jako frontu i ignoruje przesłany `file_front`. Każdy upload
+ma limit 2 MB, a cały formularz 14 MB. Odpowiedź `202` po generowaniu ma
+`model_status="awaiting_review"` albo `model_status="failed"`. Niedostępny lub
+nieprawidłowy cover daje `502 cover_source_unavailable` — upload frontu nie może
+go wtedy zastąpić.
 
 Znaczenie plików jest stałe: `front` = duże wieko, `back` = duży spód,
 `left/right` = pionowe krawędzie, `top/bottom` = poziome krawędzie. Opcjonalne
@@ -331,15 +343,19 @@ pola formularza `rotation_front`, `rotation_back`, `rotation_left`,
 `0`, `90`, `180` albo `270` stopni zgodnie z ruchem wskazówek zegara.
 Backend automatycznie poprawia oczywisty obrót 90° wynikający z proporcji, ale
 wartość rotation pozwala frontendowi poprawić także zdjęcie odwrócone o 180°.
+`rotation_front` jest ignorowane, gdy front pochodzi z covera.
 
 Generator działa w ograniczonym slocie podczas aktywnego requestu i tworzy
-dwuczęściowy GLB (`BoxBase` + `BoxLid`) z osadzonymi teksturami. Odpowiedź `202`
-przychodzi po zakończeniu generowania ze stanem `awaiting_review` albo `failed`;
-publiczny `model_3d_url` pojawia się dopiero po akceptacji administratora.
+dwuczęściowy GLB (`BoxBase` + `BoxLid`) z osadzonymi teksturami oraz trzy osobne
+WEBP-y (`front`, lewy `side`, `top`) do pseudo-3D. WEBP ma maksymalnie 512 px na
+dłuższej krawędzi. Odpowiedź `202` przychodzi po zakończeniu generowania ze stanem
+`awaiting_review` albo `failed`; publiczny `model_3d_url` oraz komplet
+`box_face_*_url` pojawiają się dopiero po akceptacji administratora.
 
 Po zweryfikowaniu gry każdy aktywny user może przesłać lepszą propozycję sześciu
-grafik. Poprzedni zaakceptowany GLB pozostaje publiczny przez całe generowanie i
-moderację zamiennika. Dopiero akceptacja atomowo publikuje nową wersję.
+grafik. Poprzedni zaakceptowany GLB i jego trzy ścianki pozostają publiczne przez
+całe generowanie i moderację zamiennika. Dopiero akceptacja przełącza cztery URL-e
+jednym commitem. Błąd dowolnego uploadu oznacza `failed` i usuwa cały nowy staging.
 
 ### `DELETE /api/games/{slug}/3d-model`
 

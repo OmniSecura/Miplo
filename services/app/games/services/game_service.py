@@ -182,6 +182,9 @@ def to_list_item(game: Game) -> GameListItem:
         cover_url=game.cover_url,
         game_types=[game_type.name for game_type in game.game_types],
         model_3d_url=game.model_3d_url,
+        box_face_front_url=game.box_face_front_url,
+        box_face_side_url=game.box_face_side_url,
+        box_face_top_url=game.box_face_top_url,
         source=game.source,
         bgg_rank=game.bgg_rank,
         users_rated=game.users_rated,
@@ -730,11 +733,25 @@ def delete_custom_game(db: Session, slug: str, current_user: User) -> None:
         raise ApiError.not_found(ErrorCode.GAME_NOT_FOUND)
     _assert_custom_owner(game, current_user)
     game_id = game.id
+    model_candidate_path = game.model_candidate_path
+    public_model_urls = (
+        game.model_3d_url,
+        game.box_face_front_url,
+        game.box_face_side_url,
+        game.box_face_top_url,
+    )
     db.delete(game)
     db.commit()
     # Baza jest źródłem prawdy. Awaria Storage nie może przywrócić usuniętej gry;
     # osierocony publiczny plik można bezpiecznie posprzątać później.
     cover_service.delete_game_assets(game_id)
+    from services.app.games.services import box_generator_service
+
+    box_generator_service.delete_model_files(
+        game_id,
+        model_candidate_path,
+        public_model_urls,
+    )
 
 
 async def submit_gallery_image(
@@ -913,4 +930,4 @@ def delete_model_submission(db: Session, slug: str, current_user: User) -> None:
 
     # Autor propozycji może ją wycofać, ale nie może usunąć wcześniej
     # zaakceptowanego publicznego modelu całej społeczności.
-    box_generator_service.delete_path(candidate_path)
+    box_generator_service.delete_candidate_bundle(candidate_path)

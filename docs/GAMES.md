@@ -156,10 +156,20 @@ również usuwać materiały przypisane do tej gry.
 
 ## Model pudełka 3D
 
-`POST /api/games/{slug}/3d-model` przyjmuje sześć wymaganych obrazów:
-`front`, `back`, `left`, `right`, `top`, `bottom`. Przed publikacją customowej gry
-może go wysłać tylko twórca; po zweryfikowaniu gry BGG lub custom nową wersję może
-zaproponować dowolny aktywny user, o ile administrator nie zablokował kontrybucji.
+`POST /api/games/{slug}/3d-model` zawsze wymaga pięciu obrazów: `back`, `left`,
+`right`, `top`, `bottom`. `front` jest warunkowy:
+
+- jeśli gra ma zatwierdzony `cover_url` albo prywatnego kandydata okładki custom,
+  backend bezpiecznie pobiera i przepisuje cover do WEBP, a następnie zawsze używa
+  go jako frontu; ewentualny `file_front` jest ignorowany;
+- jeśli gra nie ma żadnej okładki, wymagany jest `file_front`.
+
+Zdalny cover jest pobierany wyłącznie przez HTTPS z allowlisty BGG CDN albo
+własnego Firebase Storage, bez redirectów, z timeoutem, limitem 5 MB oraz ponowną
+walidacją formatu i liczby pikseli. `rotation_front` działa tylko dla uploadu
+frontu; cover otrzymuje obrót 0°. Przed publikacją customowej gry model może wysłać
+tylko twórca; po zweryfikowaniu gry BGG lub custom nową wersję może zaproponować
+dowolny aktywny user, o ile administrator nie zablokował kontrybucji.
 
 Kontrakt ścian jest jednoznaczny:
 
@@ -181,9 +191,17 @@ null/failed/ready → pending → processing → awaiting_review → ready
 ```
 
 Niepoprawny obraz jest odrzucany synchronicznie kodem 400. `failed` oznacza
-błąd późniejszego generowania, bazy albo Storage. Kandydat GLB pozostaje prywatny;
-`model_3d_url` zmienia się dopiero po akceptacji moderatora. Podczas moderacji
-zamiennika poprzedni zaakceptowany model nadal może być renderowany.
+błąd późniejszego generowania, bazy albo Storage. Kandydat GLB oraz trzy lekkie
+tekstury kafelka (`face_front.webp`, `face_side.webp`, `face_top.webp`) pozostają
+prywatne. Każdy WEBP ma maksymalnie 512 px na dłuższej krawędzi, jakość 80 i
+respektuje tę samą rotację formularza co tekstura osadzona w GLB.
+
+`model_3d_url`, `box_face_front_url`, `box_face_side_url` i `box_face_top_url`
+zmieniają się dopiero po akceptacji moderatora. Publikacja trafia do nowego,
+wersjonowanego katalogu Storage, a wszystkie cztery URL-e są przełączane jednym
+commitem. Inwariant bazy wymusza, że trzy URL-e ścianek są albo wszystkie
+ustawione, albo wszystkie `NULL`. Podczas moderacji zamiennika poprzedni
+zaakceptowany model i jego ścianki nadal mogą być renderowane.
 
 Kolejne `POST /3d-model` jest propozycją zamiennika, nie bezpośrednią edycją
 publicznego pliku. Autor może wycofać swoją oczekującą propozycję, ale nie może
@@ -198,7 +216,13 @@ Osierocony `pending`/`processing` przestaje blokować nową propozycję po 15 mi
 Generator tworzy dwa node'y (`BoxBase`, `BoxLid`) bez CSG. Tekstury boków są
 dzielone UV między widoczny pasek denka i nałożone wieko. Sześć zoptymalizowanych
 JPEG jest osadzonych wewnątrz jednego GLB — oryginały nie trafiają na dysk ani
-do chmury. JPEG należy do rdzenia glTF 2.0; WebP wymaga opcjonalnego rozszerzenia.
+do chmury. JPEG należy do rdzenia glTF 2.0; osobne WEBP-y nie są częścią modelu
+i służą wyłącznie lekkim kafelkom pseudo-3D w katalogu i na półce.
+
+`GameListItem` i `GameDetail` zwracają płaskie pola `box_face_front_url`,
+`box_face_side_url`, `box_face_top_url`. `NULL` oznacza fallback do `cover_url`
+i koloru wyliczonego po stronie klienta. Nie wykonujemy backfillu dla modeli
+zaakceptowanych przed migracją.
 
 Układ osi jest stały: `X=box_width`, `Y=box_height`, `Z=box_depth`. Wieko jest
 współosiowe z denkiem i nasuwa się właśnie wzdłuż grubości `box_depth`; niewielki
@@ -292,8 +316,8 @@ kopię pliku SQLite. Na dev/prod zastosuj migrację
 `database/sql/migrations/0003_game_barcodes.sql` i
 `database/sql/migrations/0004_game_language_enum.sql` oraz
 `database/sql/migrations/0005_exact_barcode_formats.sql` (docelowo Alembic).
-Tabela półki jest dodawana przez `0006_shelf_items.sql`, a oceny i agregaty
-przez `0007_ratings.sql`.
+Tabela półki jest dodawana przez `0006_shelf_items.sql`, oceny i agregaty przez
+`0007_ratings.sql`, a tekstury pseudo-3D przez `0008_box_face_textures.sql`.
 
 ## Testy
 

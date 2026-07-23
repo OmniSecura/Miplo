@@ -70,9 +70,21 @@ def reject_game(db: Session, slug: str) -> None:
     if game.source != "custom":
         raise ApiError.forbidden(ErrorCode.CANNOT_EDIT_BGG_GAME)
     game_id = game.id
+    model_candidate_path = game.model_candidate_path
+    public_model_urls = (
+        game.model_3d_url,
+        game.box_face_front_url,
+        game.box_face_side_url,
+        game.box_face_top_url,
+    )
     db.delete(game)
     db.commit()
     cover_service.delete_game_assets(game_id)
+    box_generator_service.delete_model_files(
+        game_id,
+        model_candidate_path,
+        public_model_urls,
+    )
 
 
 def list_pending_images(db: Session, limit: int = 100) -> list[PendingImageModeration]:
@@ -240,19 +252,43 @@ def approve_model(db: Session, slug: str) -> GameDetail:
     game = get_game_by_slug(db, slug)
     if game is None:
         raise ApiError.not_found(ErrorCode.GAME_NOT_FOUND)
-    if game.model_status != "awaiting_review" or not game.model_candidate_path:
+    if (
+        game.model_status != "awaiting_review"
+        or not game.model_candidate_path
+        or not game.model_job_id
+    ):
         raise ApiError.conflict(ErrorCode.MODEL_NOT_READY_FOR_REVIEW)
 
     candidate_path = game.model_candidate_path
-    game.model_3d_url = box_generator_service.publish_candidate(game.id, candidate_path)
+    old_public_urls = (
+        game.model_3d_url,
+        game.box_face_front_url,
+        game.box_face_side_url,
+        game.box_face_top_url,
+    )
+    published = box_generator_service.publish_candidate_bundle(
+        game.id,
+        game.model_job_id,
+        candidate_path,
+    )
+    game.model_3d_url = published.model_3d_url
+    game.box_face_front_url = published.box_face_front_url
+    game.box_face_side_url = published.box_face_side_url
+    game.box_face_top_url = published.box_face_top_url
     game.model_status = "ready"
     game.model_is_verified = True
     game.model_candidate_path = None
     game.model_job_id = None
     game.model_submitted_by_id = None
     game.model_submitted_at = None
-    db.commit()
-    box_generator_service.delete_path(candidate_path)
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        box_generator_service.delete_paths(published.public_paths)
+        raise
+    box_generator_service.delete_candidate_bundle(candidate_path)
+    box_generator_service.delete_public_assets(game.id, old_public_urls)
     db.refresh(game)
     return to_detail(game)
 
@@ -273,7 +309,7 @@ def reject_model(db: Session, slug: str) -> None:
     game.model_submitted_at = None
     game.model_is_verified = game.model_3d_url is not None
     db.commit()
-    box_generator_service.delete_path(candidate_path)
+    box_generator_service.delete_candidate_bundle(candidate_path)
 
 
 def set_contributions_enabled(db: Session, slug: str, enabled: bool) -> GameDetail:
